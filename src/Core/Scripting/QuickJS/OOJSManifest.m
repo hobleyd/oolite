@@ -32,57 +32,50 @@ MA 02110-1301, USA.
 #import "PlayerEntityScriptMethods.h"
 #import "Universe.h"
 
-static JSValue ManifestComment(OOJS_NATIVE_ARGS);
-static JSValue ManifestSetComment(OOJS_NATIVE_ARGS);
-static JSValue ManifestShortComment(OOJS_NATIVE_ARGS);
-static JSValue ManifestSetShortComment(OOJS_NATIVE_ARGS);
+static JSObject* sManifestPrototype;
+static JSObject* sManifestObject;
 
-static JSValue ManifestGetProperty(OOJS_GETTER_ARGS);
+static JSBool ManifestComment(JSContext* context, uintN argc, jsval* vp);
+static JSBool ManifestSetComment(JSContext* context, uintN argc, jsval* vp);
+static JSBool ManifestShortComment(JSContext* context, uintN argc, jsval* vp);
+static JSBool ManifestSetShortComment(JSContext* context, uintN argc, jsval* vp);
 
-/*	SpiderMonkey called the Manifest class's get, set and delete hooks for
-        every property; string-named properties map to cargo quantities. QuickJS
-        has no such hooks, so the class's exotic methods provide the same view:
-        each defined commodity appears as an own property whose value is the
-        cargo quantity, assignments to any other name set the cargo quantity as
-        before and are also stored as an ordinary property (as the SpiderMonkey
-        object kept them in a slot), and delete sets the quantity to undefined,
-        which is an error, as before. The tinyid property list stays on the
-        prototype, and is reported as an own property as SpiderMonkey did for
-        shared permanent properties (commodities are not enumerated, as before).
-*/
-static int ManifestGetOwnProperty(JSContext* context, JSPropertyDescriptor* desc, JSValueConst object, JSAtom propID);
-static int ManifestDeleteProperty(JSContext* context, JSValueConst object, JSAtom propID);
-static int ManifestSetPropertyExotic(JSContext* context, JSValueConst object, JSAtom propID, JSValueConst value, JSValueConst receiver, int flags);
+static JSBool ManifestDeleteProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool ManifestGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool ManifestSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
 
-static JSClassExoticMethods sManifestExoticMethods = {
-    .get_own_property = ManifestGetOwnProperty,
-    .get_own_property_names = OOJSGetSharedPermanentOwnPropertyNames,
-    .delete_property = ManifestDeleteProperty,
-    .set_property = ManifestSetPropertyExotic,
-};
+static JSClass sManifestClass = {
+    "Manifest",
+    JSCLASS_HAS_PRIVATE,
 
-static JSClassID sManifestClassID;
-static JSClassDef sManifestClass = {
-    .class_name = "Manifest",
-    .finalizer = OOJSObjectWrapperFinalize,
-    .exotic = &sManifestExoticMethods,
+    JS_PropertyStub,
+    ManifestDeleteProperty,
+    ManifestGetProperty,
+    ManifestSetProperty,
+    JS_EnumerateStub,
+    JS_ResolveStub,
+    JS_ConvertStub,
+    OOJSObjectWrapperFinalize,
+    JSCLASS_NO_OPTIONAL_MEMBERS
 };
 
 enum {
     kManifest_list // manifest list, array of commodities: name, unit, quantity, displayName - read-only
 };
 
-static const JSCFunctionListEntry sManifestProperties[] = {
-    // JS name					Getter				ID
-    OOJS_PROPERTY_RO("list", ManifestGetProperty, kManifest_list),
+static JSPropertySpec sManifestProperties[] = {
+    // JS name					ID							flags
+    { "list", kManifest_list, OOJS_PROP_READONLY_CB },
+    { 0 }
 };
 
-static const JSCFunctionListEntry sManifestMethods[] = {
+static JSFunctionSpec sManifestMethods[] = {
     // JS name					Function					min args
-    JS_CFUNC_DEF("shortComment", 1, ManifestShortComment),
-    JS_CFUNC_DEF("setShortComment", 2, ManifestSetShortComment),
-    JS_CFUNC_DEF("comment", 1, ManifestComment),
-    JS_CFUNC_DEF("setComment", 2, ManifestSetComment),
+    { "shortComment", ManifestShortComment, 1 },
+    { "setShortComment", ManifestSetShortComment, 2 },
+    { "comment", ManifestComment, 1 },
+    { "setComment", ManifestSetComment, 2 },
+    { 0 }
 };
 
 // Helper class wrapped by JS Manifest objects
@@ -101,200 +94,112 @@ static const JSCFunctionListEntry sManifestMethods[] = {
     return @"Manifest";
 }
 
-- (JSValue)oo_jsValueInContext:(JSContext*)context
+- (jsval)oo_jsValueInContext:(JSContext*)context
 {
-    JSValue jsSelf = JS_NewObjectClass(context, sManifestClassID);
-    if (JS_IsException(jsSelf)) {
-        JS_FreeValue(context, JS_GetException(context));
-        return JS_NULL;
-    }
-    JS_SetOpaque(jsSelf, [self retain]);
+    JSObject* jsSelf = NULL;
+    jsval result = JSVAL_NULL;
 
-    return jsSelf;
+    jsSelf = JS_NewObject(context, &sManifestClass, sManifestPrototype, NULL);
+    if (jsSelf != NULL) {
+        if (!JS_SetPrivate(context, jsSelf, [self retain]))
+            jsSelf = NULL;
+    }
+    if (jsSelf != NULL)
+        result = OBJECT_TO_JSVAL(jsSelf);
+
+    return result;
 }
 
 @end
 
-void InitOOJSManifest(JSContext* context, JSValueConst global)
+void InitOOJSManifest(JSContext* context, JSObject* global)
 {
-    OOJSRegisterClass(&sManifestClassID, &sManifestClass);
-    JSValueConst manifestPrototype = OOJSInitClass(context, global, sManifestClassID, JS_UNDEFINED, OOJSUnconstructableConstruct, 0,
-        sManifestProperties, OOJS_COUNT(sManifestProperties), sManifestMethods, OOJS_COUNT(sManifestMethods), NULL, 0);
-    OOJSRegisterObjectConverter(sManifestClassID, OOJSBasicPrivateObjectConverter);
+    sManifestPrototype = JS_InitClass(context, global, NULL, &sManifestClass, OOJSUnconstructableConstruct, 0, sManifestProperties, sManifestMethods, NULL, NULL);
+    OOJSRegisterObjectConverter(&sManifestClass, OOJSBasicPrivateObjectConverter);
 
-    // Create manifest object as a property of the player.ship object. (Its private value is NULL.)
-    JSValue playerShip = JSPlayerShipObject(); // Owned.
-    if (JS_IsObject(playerShip)) {
-        JSValue shipManifest = JS_NewObjectProtoClass(context, manifestPrototype, sManifestClassID);
-        if (JS_DefinePropertyValueStr(context, playerShip, "manifest", shipManifest, OOJS_PROP_READONLY) < 0) {
-            OOJSReportPendingException(context);
-        }
-    } else if (JS_IsException(playerShip)) {
-        OOJSReportPendingException(context);
-        playerShip = JS_UNDEFINED;
-    }
-    JS_FreeValue(context, playerShip);
+    // Create manifest object as a property of the player.ship object.
+    sManifestObject = JS_DefineObject(context, JSPlayerShipObject(), "manifest", &sManifestClass, sManifestPrototype, OOJS_PROP_READONLY);
+    JS_SetPrivate(context, sManifestObject, NULL);
 
     // Also define manifest object as a property of the global object.
     // Wait, what? Why? Oh well, too late now. Deprecate for EMMSTRAN? -- Ahruman 2011-02-10
-    JS_DefinePropertyValueStr(context, global, "manifest", JS_NewObjectProtoClass(context, manifestPrototype, sManifestClassID), OOJS_PROP_READONLY);
+    JS_DefineObject(context, global, "manifest", &sManifestClass, sManifestPrototype, OOJS_PROP_READONLY);
 }
 
-// Name for a string property ID, or nil for other IDs (symbols and integers, which SpiderMonkey's hooks ignored).
-static NSString* NameForPropertyID(JSContext* context, JSAtom propID)
+static JSBool ManifestDeleteProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
-    NSString* result = nil;
-    JSValue idValue = JS_AtomToValue(context, propID);
-    if (JS_IsString(idValue)) {
-        result = OOStringFromJSValue(context, idValue);
-    }
-    JS_FreeValue(context, idValue);
-    return result;
+    jsval v = JSVAL_VOID;
+    return ManifestSetProperty(context, this, propID, NO, &v);
 }
 
-static JSValue ManifestGetProperty(OOJS_GETTER_ARGS)
+static JSBool ManifestGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
     OOJS_NATIVE_ENTER(context)
 
     id result = nil;
     PlayerEntity* entity = OOPlayerForScripting();
 
-    switch (magic) {
-    case kManifest_list:
-        result = [entity cargoListForScripting];
-        break;
+    if (JSID_IS_INT(propID)) {
+        switch (JSID_TO_INT(propID)) {
+        case kManifest_list:
+            result = [entity cargoListForScripting];
+            break;
 
-    default:
-        OOJSReportBadPropertySelector(context, this, magic, sManifestProperties, OOJS_COUNT(sManifestProperties));
-        return JS_EXCEPTION;
-    }
-
-    return OOJSValueFromNativeObject(context, result);
-
-    OOJS_NATIVE_EXIT
-}
-
-static int ManifestGetOwnProperty(JSContext* context, JSPropertyDescriptor* desc, JSValueConst object, JSAtom propID)
-{
-    @try {
-        PlayerEntity* entity = OOPlayerForScripting();
-
+        default:
+            OOJSReportBadPropertySelector(context, this, propID, sManifestProperties);
+            return NO;
+        }
+    } else if (JSID_IS_STRING(propID)) {
         /* 'list' property is hard-coded
          * others map to the commodity keys in trade-goods.plist
          * compatible-ish with 1.80 and earlier except that
          * alienItems and similar aliases don't work */
-        NSString* key = NameForPropertyID(context, propID);
-        if (key != nil && [[UNIVERSE commodities] goodDefined:key]) {
-            if (desc != NULL) {
-                desc->flags = JS_PROP_C_W_E;
-                desc->value = JS_NewInt32(context, [entity cargoQuantityForType:key]);
-                desc->getter = JS_UNDEFINED;
-                desc->setter = JS_UNDEFINED;
-            }
+        NSString* key = OOStringFromJSString(context, JSID_TO_STRING(propID));
+        if ([[UNIVERSE commodities] goodDefined:key]) {
+            *value = INT_TO_JSVAL([entity cargoQuantityForType:key]);
+            return YES;
+        } else {
             return YES;
         }
-        // As SpiderMonkey did, report "list" (a shared permanent prototype property) as an own property.
-        return OOJSGetSharedPermanentOwnProperty(context, desc, object, propID);
     }
-    @catch (id exception) {
-        OOJSReportWrappedException(context, exception);
-        return -1;
-    }
+
+    *value = OOJSValueFromNativeObject(context, result);
+    return YES;
+
+    OOJS_NATIVE_EXIT
 }
 
-// Returns NO with an exception pending on failure.
-static BOOL ManifestSetProperty(JSContext* context, JSValueConst this, NSString* key, JSValueConst value)
+static JSBool ManifestSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
 {
+    OOJS_NATIVE_ENTER(context)
+
     PlayerEntity* entity = OOPlayerForScripting();
-    int32_t iValue;
+    int32 iValue;
 
-    OOMassUnit unit = [[UNIVERSE commodityMarket] massUnitForGood:key];
-    // we can always change gold, platinum & gem-stones quantities, even with special cargo
-    if (unit == UNITS_TONS && [entity specialCargo]) {
-        OOJSReportWarning(context, @"PlayerShip.manifest['foo'] - cannot modify cargo tonnage when Special Cargo is in use.");
-        return YES;
-    }
+    if (JSID_IS_STRING(propID)) {
+        NSString* key = OOStringFromJSString(context, JSID_TO_STRING(propID));
 
-    if (OOJSValueToInt32(context, value, &iValue)) {
-        if (iValue < 0)
-            iValue = 0;
-        [entity setCargoQuantityForType:key amount:iValue];
-    } else {
-        // OOJSReportBadPropertyValue() takes a tinyid; this is the same message for a named property.
-        if (JS_HasException(context))
-            JS_FreeValue(context, JS_GetException(context));
-        OOJSReportError(context, @"Cannot set property %@ of instance of %@ to invalid value %@.", key, OOJSClassNameOfValue(context, this), OOJSDescribeValue(context, value, YES));
-        return NO;
+        OOMassUnit unit = [[UNIVERSE commodityMarket] massUnitForGood:key];
+        // we can always change gold, platinum & gem-stones quantities, even with special cargo
+        if (unit == UNITS_TONS && [entity specialCargo]) {
+            OOJSReportWarning(context, @"PlayerShip.manifest['foo'] - cannot modify cargo tonnage when Special Cargo is in use.");
+            return YES;
+        }
+
+        if (JS_ValueToInt32(context, *value, &iValue)) {
+            if (iValue < 0)
+                iValue = 0;
+            [entity setCargoQuantityForType:key amount:iValue];
+        } else {
+            OOJSReportBadPropertyValue(context, this, propID, sManifestProperties, *value);
+        }
     }
     return YES;
+
+    OOJS_NATIVE_EXIT
 }
 
-static int ManifestSetPropertyExotic(JSContext* context, JSValueConst object, JSAtom propID, JSValueConst value, JSValueConst receiver, int flags)
-{
-    @try {
-        NSString* key = NameForPropertyID(context, propID);
-        if (key == nil) {
-            // Not handled by the SpiderMonkey hook; store as an ordinary property.
-            return JS_DefinePropertyValue(context, receiver, propID, JS_DupValue(context, value), JS_PROP_C_W_E);
-        }
-
-        // A read-only property inherited from the prototype (list) can't be assigned.
-        JSValue prototype = JS_GetPrototype(context, object);
-        if (JS_IsException(prototype))
-            return -1;
-        JSPropertyDescriptor protoDesc;
-        int found = JS_IsObject(prototype) ? JS_GetOwnProperty(context, &protoDesc, prototype, propID) : 0;
-        JS_FreeValue(context, prototype);
-        if (found < 0)
-            return -1;
-        if (found) {
-            BOOL readOnly = (protoDesc.flags & JS_PROP_GETSET) ? JS_IsUndefined(protoDesc.setter) : !(protoDesc.flags & JS_PROP_WRITABLE);
-            JS_FreeValue(context, protoDesc.value);
-            JS_FreeValue(context, protoDesc.getter);
-            JS_FreeValue(context, protoDesc.setter);
-            if (readOnly) {
-                if (flags & JS_PROP_THROW) {
-                    OOJSReportError(context, @"Cannot set read-only property %@ of instance of %@.", key, OOJSClassNameOfValue(context, receiver));
-                    return -1;
-                }
-                return NO;
-            }
-        }
-
-        if (!ManifestSetProperty(context, receiver, key, value))
-            return -1;
-
-        /*	SpiderMonkey also stored the value in a slot. For commodities, the
-                get hook overrode it; for other names, it was what later reads
-                returned.
-        */
-        if (![[UNIVERSE commodities] goodDefined:key]) {
-            return JS_DefinePropertyValue(context, receiver, propID, JS_DupValue(context, value), JS_PROP_C_W_E);
-        }
-        return YES;
-    }
-    @catch (id exception) {
-        OOJSReportWrappedException(context, exception);
-        return -1;
-    }
-}
-
-static int ManifestDeleteProperty(JSContext* context, JSValueConst object, JSAtom propID)
-{
-    @try {
-        // As before, deleting is setting to undefined.
-        NSString* key = NameForPropertyID(context, propID);
-        if (key == nil)
-            return YES;
-        return ManifestSetProperty(context, object, key, JS_UNDEFINED) ? YES : -1;
-    }
-    @catch (id exception) {
-        OOJSReportWrappedException(context, exception);
-        return -1;
-    }
-}
-
-static JSValue ManifestComment(OOJS_NATIVE_ARGS)
+static JSBool ManifestComment(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -305,8 +210,8 @@ static JSValue ManifestComment(OOJS_NATIVE_ARGS)
         good = OOStringFromJSValue(context, OOJS_ARGV[0]);
     }
     if (good == nil) {
-        OOJSReportBadArguments(context, @"Manifest", @"comment", MIN(argc, 1), OOJS_ARGV, nil, @"good");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, @"Manifest", @"comment", MIN(argc, 1U), OOJS_ARGV, nil, @"good");
+        return NO;
     }
 
     information = [[PLAYER shipCommodityData] commentForGood:good];
@@ -316,7 +221,7 @@ static JSValue ManifestComment(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue ManifestSetComment(OOJS_NATIVE_ARGS)
+static JSBool ManifestSetComment(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -329,8 +234,8 @@ static JSValue ManifestSetComment(OOJS_NATIVE_ARGS)
         information = OOStringFromJSValue(context, OOJS_ARGV[1]);
     }
     if (good == nil || information == nil) {
-        OOJSReportBadArguments(context, @"Manifest", @"setComment", MIN(argc, 2), OOJS_ARGV, nil, @"good and information text");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, @"Manifest", @"setComment", MIN(argc, 2U), OOJS_ARGV, nil, @"good and information text");
+        return NO;
     }
 
     OK = [[PLAYER shipCommodityData] setComment:information forGood:good];
@@ -340,7 +245,7 @@ static JSValue ManifestSetComment(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue ManifestShortComment(OOJS_NATIVE_ARGS)
+static JSBool ManifestShortComment(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -351,8 +256,8 @@ static JSValue ManifestShortComment(OOJS_NATIVE_ARGS)
         good = OOStringFromJSValue(context, OOJS_ARGV[0]);
     }
     if (good == nil) {
-        OOJSReportBadArguments(context, @"Manifest", @"shortComment", MIN(argc, 1), OOJS_ARGV, nil, @"good");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, @"Manifest", @"shortComment", MIN(argc, 1U), OOJS_ARGV, nil, @"good");
+        return NO;
     }
 
     information = [[PLAYER shipCommodityData] shortCommentForGood:good];
@@ -362,7 +267,7 @@ static JSValue ManifestShortComment(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue ManifestSetShortComment(OOJS_NATIVE_ARGS)
+static JSBool ManifestSetShortComment(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -375,8 +280,8 @@ static JSValue ManifestSetShortComment(OOJS_NATIVE_ARGS)
         information = OOStringFromJSValue(context, OOJS_ARGV[1]);
     }
     if (good == nil || information == nil) {
-        OOJSReportBadArguments(context, @"Manifest", @"setShortComment", MIN(argc, 2), OOJS_ARGV, nil, @"good and information text");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, @"Manifest", @"setShortComment", MIN(argc, 2U), OOJS_ARGV, nil, @"good and information text");
+        return NO;
     }
 
     OK = [[PLAYER shipCommodityData] setShortComment:information forGood:good];

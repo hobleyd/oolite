@@ -1,6 +1,6 @@
 /*
 
-EntityOOJavaScriptExtensions.m (QuickJS-ng)
+EntityOOJavaScriptExtensions.m
 
 Oolite
 Copyright (C) 2004-2013 Giles C Williams and contributors
@@ -19,6 +19,7 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 MA 02110-1301, USA.
+
 */
 
 #import "EntityOOJavaScriptExtensions.h"
@@ -45,17 +46,24 @@ MA 02110-1301, USA.
     return @"Entity";
 }
 
-- (JSValue)oo_jsValueInContext:(JSContext*)context
+- (jsval)oo_jsValueInContext:(JSContext*)context
 {
-    if (!JS_IsObject(_jsSelf) && [self isVisibleToScripts]) {
-        // Create JS object. The entity keeps a reference to it for as long as the entity exists.
-        _jsSelf = JS_NewObjectClass(context, (int)[self oo_jsClassID]);
-        if (JS_IsException(_jsSelf)) {
-            JS_FreeValue(context, JS_GetException(context));
-            _jsSelf = JS_UNDEFINED;
-        } else {
-            JS_SetOpaque(_jsSelf, OOConsumeReference([self weakRetain]));
+    JSClass* class = NULL;
+    JSObject* prototype = NULL;
+    jsval result = JSVAL_NULL;
 
+    if (_jsSelf == NULL && [self isVisibleToScripts]) {
+        // Create JS object
+        [self getJSClass:&class andPrototype:&prototype];
+
+        _jsSelf = JS_NewObject(context, class, prototype, NULL);
+        if (_jsSelf != NULL) {
+            if (!JS_SetPrivate(context, _jsSelf, OOConsumeReference([self weakRetain])))
+                _jsSelf = NULL;
+        }
+
+        if (_jsSelf != NULL) {
+            OOJSAddGCObjectRoot(context, &_jsSelf, "Entity jsSelf");
             [[NSNotificationCenter defaultCenter] addObserver:self
                                                      selector:@selector(deleteJSSelf)
                                                          name:kOOJavaScriptEngineWillResetNotification
@@ -63,27 +71,26 @@ MA 02110-1301, USA.
         }
     }
 
-    if (JS_IsObject(_jsSelf))
-        return JS_DupValue(context, _jsSelf);
+    if (_jsSelf != NULL)
+        result = OBJECT_TO_JSVAL(_jsSelf);
 
-    return JS_NULL;
+    return result;
     // Analyzer: object leaked. [Expected, object is retained by JS object.]
 }
 
-- (JSClassID)oo_jsClassID
+- (void)getJSClass:(JSClass**)outClass andPrototype:(JSObject**)outPrototype
 {
-    return JSEntityClassID();
+    *outClass = JSEntityClass();
+    *outPrototype = JSEntityPrototype();
 }
 
 - (void)deleteJSSelf
 {
-    if (JS_IsObject(_jsSelf)) {
-        /*	Scripts may still hold the JS object. Its private data is a weak
-                reference, so it becomes stale (isValid false) when the entity is
-                deallocated.
-        */
-        JS_FreeValue(OOJSAcquireContext(), _jsSelf);
-        _jsSelf = JS_UNDEFINED;
+    if (_jsSelf != NULL) {
+        _jsSelf = NULL;
+        JSContext* context = OOJSAcquireContext();
+        JS_RemoveObjectRoot(context, &_jsSelf);
+        OOJSRelinquishContext(context);
 
         [[NSNotificationCenter defaultCenter] removeObserver:self
                                                         name:kOOJavaScriptEngineWillResetNotification
@@ -100,9 +107,10 @@ MA 02110-1301, USA.
     return YES;
 }
 
-- (JSClassID)oo_jsClassID
+- (void)getJSClass:(JSClass**)outClass andPrototype:(JSObject**)outPrototype
 {
-    return JSShipClassID();
+    *outClass = JSShipClass();
+    *outPrototype = JSShipPrototype();
 }
 
 - (NSString*)oo_jsClassName

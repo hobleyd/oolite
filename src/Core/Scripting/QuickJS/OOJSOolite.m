@@ -33,25 +33,27 @@ MA 02110-1301, USA.
 #import "OOStringParsing.h"
 #import "ResourceManager.h"
 
-static JSValue OoliteGetProperty(OOJS_GETTER_ARGS);
-static JSValue OoliteSetProperty(OOJS_SETTER_ARGS);
+static JSBool OoliteGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool OoliteSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
 
 static NSString* VersionString(void);
 static NSArray* VersionComponents(void);
 
-static JSValue OoliteCompareVersion(OOJS_NATIVE_ARGS);
+static JSBool OoliteCompareVersion(JSContext* context, uintN argc, jsval* vp);
 
-/*	oolite.jsVersion was SpiderMonkey's JS_GetVersion(), 185 (JSVERSION_ECMA_5).
-        OXPs compare it numerically, so it stays 185: QuickJS implements a
-        superset of ES5. jsVersionString was "1.8.5"; it now names the engine.
-*/
-enum {
-    kOOJSCompatibleJSVersion = 185
-};
+static JSClass sOoliteClass = {
+    "Oolite",
+    0,
 
-static JSClassID sOoliteClassID;
-static JSClassDef sOoliteClass = {
-    .class_name = "Oolite",
+    JS_PropertyStub,
+    JS_PropertyStub,
+    OoliteGetProperty,
+    OoliteSetProperty,
+    // JS_StrictPropertyStub,
+    JS_EnumerateStub,
+    JS_ResolveStub,
+    JS_ConvertStub,
+    JS_FinalizeStub
 };
 
 enum {
@@ -71,44 +73,47 @@ enum {
 #endif
 };
 
-static const JSCFunctionListEntry sOoliteProperties[] = {
-    // JS name					Getter				Setter				ID
-    OOJS_PROPERTY_RO("gameSettings", OoliteGetProperty, kOolite_gameSettings),
-    OOJS_PROPERTY_RO("jsVersion", OoliteGetProperty, kOolite_jsVersion),
-    OOJS_PROPERTY_RO("jsVersionString", OoliteGetProperty, kOolite_jsVersionString),
-    OOJS_PROPERTY_RO("version", OoliteGetProperty, kOolite_version),
-    OOJS_PROPERTY_RO("versionString", OoliteGetProperty, kOolite_versionString),
-    OOJS_PROPERTY_RO("resourcePaths", OoliteGetProperty, kOolite_resourcePaths),
-    OOJS_PROPERTY_RW("colorSaturation", OoliteGetProperty, OoliteSetProperty, kOolite_colorSaturation),
-    OOJS_PROPERTY_RW("postFX", OoliteGetProperty, OoliteSetProperty, kOolite_postFX),
-    OOJS_PROPERTY_RW("hdrToneMapper", OoliteGetProperty, OoliteSetProperty, kOolite_hdrToneMapper),
-    OOJS_PROPERTY_RW("sdrToneMapper", OoliteGetProperty, OoliteSetProperty, kOolite_sdrToneMapper),
+static JSPropertySpec sOoliteProperties[] = {
+    // JS name					ID							flags
+    { "gameSettings", kOolite_gameSettings, OOJS_PROP_READONLY_CB },
+    { "jsVersion", kOolite_jsVersion, OOJS_PROP_READONLY_CB },
+    { "jsVersionString", kOolite_jsVersionString, OOJS_PROP_READONLY_CB },
+    { "version", kOolite_version, OOJS_PROP_READONLY_CB },
+    { "versionString", kOolite_versionString, OOJS_PROP_READONLY_CB },
+    { "resourcePaths", kOolite_resourcePaths, OOJS_PROP_READONLY_CB },
+    { "colorSaturation", kOolite_colorSaturation, OOJS_PROP_READWRITE_CB },
+    { "postFX", kOolite_postFX, OOJS_PROP_READWRITE_CB },
+    { "hdrToneMapper", kOolite_hdrToneMapper, OOJS_PROP_READWRITE_CB },
+    { "sdrToneMapper", kOolite_sdrToneMapper, OOJS_PROP_READWRITE_CB },
 #ifdef OO_DEBUG_MONITOR_ENABLED
-    OOJS_PROPERTY_RW("timeAccelerationFactor", OoliteGetProperty, OoliteSetProperty, kOolite_timeAccelerationFactor),
+    { "timeAccelerationFactor", kOolite_timeAccelerationFactor, OOJS_PROP_READWRITE_CB },
 #endif
+    { 0 }
 };
 
-static const JSCFunctionListEntry sOoliteMethods[] = {
+static JSFunctionSpec sOoliteMethods[] = {
     // JS name					Function					min args
-    JS_CFUNC_DEF("compareVersion", 1, OoliteCompareVersion),
+    { "compareVersion", OoliteCompareVersion, 1 },
+    { 0 }
 };
 
-void InitOOJSOolite(JSContext* context, JSValueConst global)
+void InitOOJSOolite(JSContext* context, JSObject* global)
 {
-    OOJSRegisterClass(&sOoliteClassID, &sOoliteClass);
-    JSValueConst oolitePrototype = OOJSInitClass(context, global, sOoliteClassID, JS_UNDEFINED, OOJSUnconstructableConstruct, 0,
-        sOoliteProperties, OOJS_COUNT(sOoliteProperties), sOoliteMethods, OOJS_COUNT(sOoliteMethods), NULL, 0);
-    JS_DefinePropertyValueStr(context, global, "oolite", JS_NewObjectProtoClass(context, oolitePrototype, sOoliteClassID), OOJS_PROP_READONLY);
+    JSObject* oolitePrototype = JS_InitClass(context, global, NULL, &sOoliteClass, OOJSUnconstructableConstruct, 0, sOoliteProperties, sOoliteMethods, NULL, NULL);
+    JS_DefineObject(context, global, "oolite", &sOoliteClass, oolitePrototype, OOJS_PROP_READONLY);
 }
 
-static JSValue OoliteGetProperty(OOJS_GETTER_ARGS)
+static JSBool OoliteGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     id result = nil;
     MyOpenGLView* gameView = [UNIVERSE gameView];
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kOolite_version:
         result = VersionComponents();
         break;
@@ -118,11 +123,12 @@ static JSValue OoliteGetProperty(OOJS_GETTER_ARGS)
         break;
 
     case kOolite_jsVersion:
-        return JS_NewInt32(context, kOOJSCompatibleJSVersion);
+        *value = INT_TO_JSVAL(JS_GetVersion(context));
+        return YES;
 
     case kOolite_jsVersionString:
-        result = [NSString stringWithFormat:@"QuickJS-ng %s", JS_GetVersion()];
-        break;
+        *value = STRING_TO_JSVAL(JS_NewStringCopyZ(context, JS_VersionToString(JS_GetVersion(context))));
+        return YES;
 
     case kOolite_gameSettings:
         result = [UNIVERSE gameSettings];
@@ -134,10 +140,11 @@ static JSValue OoliteGetProperty(OOJS_GETTER_ARGS)
         break;
 
     case kOolite_colorSaturation:
-        return JS_NewNumber(context, [gameView colorSaturation]);
+        return JS_NewNumberValue(context, [gameView colorSaturation], value);
 
     case kOolite_postFX:
-        return JS_NewInt32(context, [UNIVERSE currentPostFX]);
+        *value = INT_TO_JSVAL([UNIVERSE currentPostFX]);
+        return YES;
 
     case kOolite_hdrToneMapper: {
         NSString* toneMapperStr = @"OOHDR_TONEMAPPER_UNDEFINED";
@@ -161,49 +168,53 @@ static JSValue OoliteGetProperty(OOJS_GETTER_ARGS)
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
     case kOolite_timeAccelerationFactor:
-        return JS_NewNumber(context, [UNIVERSE timeAccelerationFactor]);
+        return JS_NewNumberValue(context, [UNIVERSE timeAccelerationFactor], value);
 #endif
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sOoliteProperties, OOJS_COUNT(sOoliteProperties));
-        return JS_EXCEPTION;
+        OOJSReportBadPropertySelector(context, this, propID, sOoliteProperties);
+        return NO;
     }
 
-    return OOJSValueFromNativeObject(context, result);
+    *value = OOJSValueFromNativeObject(context, result);
+    return YES;
 
     OOJS_NATIVE_EXIT
 }
 
-static JSValue OoliteSetProperty(OOJS_SETTER_ARGS)
+static JSBool OoliteSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
-    double fValue;
-    int32_t iValue;
+    jsdouble fValue;
+    int32 iValue;
     NSString* sValue = nil;
     MyOpenGLView* gameView = [UNIVERSE gameView];
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kOolite_colorSaturation:
-        if (JS_ToFloat64(context, &fValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &fValue)) {
             float currentColorSaturation = [gameView colorSaturation];
             [gameView adjustColorSaturation:fValue - currentColorSaturation];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kOolite_postFX:
-        if (OOJSValueToInt32(context, value, &iValue)) {
+        if (JS_ValueToInt32(context, *value, &iValue)) {
             iValue = MAX(iValue, 0);
             [UNIVERSE setCurrentPostFX:iValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kOolite_hdrToneMapper:
-        if (!JS_IsString(value))
+        if (!JSVAL_IS_STRING(*value))
             break; // non-string is not allowed
-        sValue = OOStringFromJSValue(context, value);
+        sValue = OOStringFromJSValue(context, *value);
         if (sValue != nil) {
 #if OOLITE_WINDOWS
             if ([gameView hdrOutput])
@@ -211,42 +222,39 @@ static JSValue OoliteSetProperty(OOJS_SETTER_ARGS)
             else
                 OOJSReportWarning(context, @"hdrToneMapper cannot be set if not running in HDR mode");
 #endif
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kOolite_sdrToneMapper:
-        if (!JS_IsString(value))
+        if (!JSVAL_IS_STRING(*value))
             break; // non-string is not allowed
-        sValue = OOStringFromJSValue(context, value);
+        sValue = OOStringFromJSValue(context, *value);
         if (sValue != nil) {
             if (![gameView hdrOutput])
                 [gameView setSDRToneMapper:OOSDRToneMapperFromString(sValue)];
             else
                 OOJSReportWarning(context, @"sdrToneMapper cannot be set if not running in SDR mode");
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
     case kOolite_timeAccelerationFactor:
-        if (JS_ToFloat64(context, &fValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &fValue)) {
             [UNIVERSE setTimeAccelerationFactor:fValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 #endif
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sOoliteProperties, OOJS_COUNT(sOoliteProperties));
-        return JS_EXCEPTION;
+        OOJSReportBadPropertySelector(context, this, propID, sOoliteProperties);
+        return NO;
     }
 
-    // A failed conversion may have left an exception pending; report the bad value instead, as before.
-    if (JS_HasException(context))
-        JS_FreeValue(context, JS_GetException(context));
-    OOJSReportBadPropertyValue(context, this, magic, sOoliteProperties, OOJS_COUNT(sOoliteProperties), value);
-    return JS_EXCEPTION;
+    OOJSReportBadPropertyValue(context, this, propID, sOoliteProperties, *value);
+    return NO;
 
     OOJS_NATIVE_EXIT
 }
@@ -268,7 +276,7 @@ static NSArray* VersionComponents(void)
         if (0 < oolite.compareVersion("1.70"))  log("Old version of Oolite!")
         else  this.doStuffThatRequires170()
 */
-static JSValue OoliteCompareVersion(OOJS_NATIVE_ARGS)
+static JSBool OoliteCompareVersion(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 

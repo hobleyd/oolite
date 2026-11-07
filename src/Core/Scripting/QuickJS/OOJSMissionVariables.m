@@ -31,276 +31,175 @@ MA 02110-1301, USA.
 
 #import "OOJSPlayer.h"
 
-/*	SpiderMonkey called the MissionVariables class's get, set and delete hooks
-        for every property access, and its enumerate hook for for-in. QuickJS
-        has no such hooks; the class's exotic methods provide the same view
-        instead: every mission variable appears as an enumerable own property,
-        assignments and deletions go to the player's mission variables, and
-        reading a missing (non-"_") name gives null, as before. Names starting
-        with "_" are not mission variables; reading them falls back to the
-        prototype (Object.prototype) and assigning them is an error. Properties
-        of Object.prototype (such as toString) are found there unless a mission
-        variable of the same name exists.
-*/
-
-// Property name for a string property ID, or nil for other IDs (symbols).
-static NSString* NameForPropertyID(JSContext* context, JSAtom propID)
+static NSString* KeyForPropertyID(JSContext* context, jsid propID)
 {
-    NSString* result = nil;
-    JSValue idValue = JS_AtomToValue(context, propID);
-    // SpiderMonkey's hooks ignored integer IDs; QuickJS uses integer atoms for names like "0".
-    if (JS_IsString(idValue)) {
-        result = OOStringFromJSValue(context, idValue);
-    }
-    JS_FreeValue(context, idValue);
-    return result;
-}
+    NSCParameterAssert(JSID_IS_STRING(propID));
 
-static NSString* KeyForPropertyName(NSString* name)
-{
-    if (name == nil || [name hasPrefix:@"_"])
+    NSString* key = OOStringFromJSString(context, JSID_TO_STRING(propID));
+    if ([key hasPrefix:@"_"])
         return nil;
-    return [@"mission_" stringByAppendingString:name];
+    return [@"mission_" stringByAppendingString:key];
 }
 
-static int MissionVariablesGetOwnProperty(JSContext* context, JSPropertyDescriptor* desc, JSValueConst object, JSAtom propID);
-static int MissionVariablesGetOwnPropertyNames(JSContext* context, JSPropertyEnum** outTable, uint32_t* outCount, JSValueConst object);
-static int MissionVariablesDeleteProperty(JSContext* context, JSValueConst object, JSAtom propID);
-static int MissionVariablesDefineOwnProperty(JSContext* context, JSValueConst object, JSAtom propID, JSValueConst value, JSValueConst getter, JSValueConst setter, int flags);
-static JSValue MissionVariablesGetProperty(JSContext* context, JSValueConst object, JSAtom propID, JSValueConst receiver);
-static int MissionVariablesSetProperty(JSContext* context, JSValueConst object, JSAtom propID, JSValueConst value, JSValueConst receiver, int flags);
+static JSBool MissionVariablesDeleteProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool MissionVariablesGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool MissionVariablesSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
+static JSBool MissionVariablesEnumerate(JSContext* context, JSObject* object, JSIterateOp enumOp, jsval* state, jsid* idp);
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
-static id MissionVariablesConverter(JSContext* context, JSValueConst object);
+static id MissionVariablesConverter(JSContext* context, JSObject* object);
 #endif
 
-static JSClassExoticMethods sMissionVariablesExoticMethods = {
-    .get_own_property = MissionVariablesGetOwnProperty,
-    .get_own_property_names = MissionVariablesGetOwnPropertyNames,
-    .delete_property = MissionVariablesDeleteProperty,
-    .define_own_property = MissionVariablesDefineOwnProperty,
-    .get_property = MissionVariablesGetProperty,
-    .set_property = MissionVariablesSetProperty,
+static JSClass sMissionVariablesClass = {
+    "MissionVariables",
+    JSCLASS_NEW_ENUMERATE,
+
+    JS_PropertyStub,
+    MissionVariablesDeleteProperty,
+    MissionVariablesGetProperty,
+    MissionVariablesSetProperty,
+    (JSEnumerateOp)MissionVariablesEnumerate,
+    JS_ResolveStub,
+    JS_ConvertStub,
+    JS_FinalizeStub
 };
 
-static JSClassID sMissionVariablesClassID;
-static JSClassDef sMissionVariablesClass = {
-    .class_name = "MissionVariables",
-    .exotic = &sMissionVariablesExoticMethods,
-};
-
-void InitOOJSMissionVariables(JSContext* context, JSValueConst global)
+void InitOOJSMissionVariables(JSContext* context, JSObject* global)
 {
-    OOJSRegisterClass(&sMissionVariablesClassID, &sMissionVariablesClass);
-
-    // As with JS_DefineObject() with a NULL prototype, the prototype is Object.prototype.
-    JSValue objectPrototype = OOJSObjectPrototype(context);
-    JSValue missionVariables = JS_NewObjectProtoClass(context, objectPrototype, sMissionVariablesClassID);
-    JS_FreeValue(context, objectPrototype);
-    JS_DefinePropertyValueStr(context, global, "missionVariables", missionVariables, OOJS_PROP_READONLY);
+    JS_DefineObject(context, global, "missionVariables", &sMissionVariablesClass, NULL, OOJS_PROP_READONLY);
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
     // Allow callObjC() on missionVariables to call methods on the mission variables dictionary.
-    OOJSRegisterObjectConverter(sMissionVariablesClassID, MissionVariablesConverter);
+    OOJSRegisterObjectConverter(&sMissionVariablesClass, MissionVariablesConverter);
 #endif
 }
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
-static id MissionVariablesConverter(JSContext* context, JSValueConst object)
+static id MissionVariablesConverter(JSContext* context, JSObject* object)
 {
     return [PLAYER missionVariables];
 }
 #endif
 
-// Owned value of a mission variable, or JS_UNDEFINED if it doesn't exist.
-static JSValue ValueForMissionVariable(JSContext* context, NSString* key)
-{
-    PlayerEntity* player = OOPlayerForScripting();
-    id mvar = [player missionVariableForKey:key];
-
-    if (mvar == nil)
-        return JS_UNDEFINED;
-
-    if ([mvar isKindOfClass:[NSString class]]) // Currently there should only be strings, but we may want to change this.
-    {
-        if (OOIsNumberLiteral(mvar, YES)) {
-            return JS_NewNumber(context, [mvar doubleValue]);
-        }
-    }
-
-    return OOJSValueFromNativeObject(context, mvar);
-}
-
-static int MissionVariablesGetOwnProperty(JSContext* context, JSPropertyDescriptor* desc, JSValueConst object, JSAtom propID)
-{
-    @try {
-        NSString* key = KeyForPropertyName(NameForPropertyID(context, propID));
-        if (key == nil)
-            return NO;
-
-        JSValue value = ValueForMissionVariable(context, key);
-        if (JS_IsUndefined(value))
-            return NO;
-
-        if (desc != NULL) {
-            desc->flags = JS_PROP_C_W_E;
-            desc->value = value;
-            desc->getter = JS_UNDEFINED;
-            desc->setter = JS_UNDEFINED;
-        } else {
-            JS_FreeValue(context, value);
-        }
-        return YES;
-    }
-    @catch (id exception) {
-        OOJSReportWrappedException(context, exception);
-        return -1;
-    }
-}
-
-static int MissionVariablesGetOwnPropertyNames(JSContext* context, JSPropertyEnum** outTable, uint32_t* outCount, JSValueConst object)
-{
-    @try {
-        // -allKeys implicitly makes a copy, which is good since the enumerating code might mutate.
-        NSArray* mvars = [[PLAYER missionVariables] allKeys];
-        NSUInteger count = [mvars count];
-        assert(count <= INT32_MAX);
-
-        JSPropertyEnum* table = js_malloc(context, sizeof *table * MAX(count, (NSUInteger)1));
-        if (table == NULL)
-            return -1;
-
-        uint32_t used = 0;
-        NSString* next = nil;
-        foreach (next, mvars) {
-            if (![next hasPrefix:@"mission_"])
-                continue; // Skip mission instructions, which aren't visible through missionVariables.
-
-            next = [next substringFromIndex:8]; // Cut off "mission_".
-
-            JSAtom atom = JS_NewAtom(context, [next UTF8String]);
-            if (atom == JS_ATOM_NULL) {
-                JS_FreePropertyEnum(context, table, used);
-                return -1;
-            }
-            table[used].is_enumerable = true;
-            table[used].atom = atom;
-            used++;
-        }
-
-        // QuickJS frees the table and its atoms.
-        *outTable = table;
-        *outCount = used;
-        return 0;
-    }
-    @catch (id exception) {
-        OOJSReportWrappedException(context, exception);
-        return -1;
-    }
-}
-
-static int MissionVariablesDeleteProperty(JSContext* context, JSValueConst object, JSAtom propID)
-{
-    @try {
-        PlayerEntity* player = OOPlayerForScripting();
-
-        NSString* name = NameForPropertyID(context, propID);
-        if (name != nil) {
-            NSString* key = KeyForPropertyName(name);
-            [player setMissionVariable:nil forKey:key];
-        }
-        return YES;
-    }
-    @catch (id exception) {
-        OOJSReportWrappedException(context, exception);
-        return -1;
-    }
-}
-
-static JSValue MissionVariablesGetProperty(JSContext* context, JSValueConst object, JSAtom propID, JSValueConst receiver)
+static JSBool MissionVariablesDeleteProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
     OOJS_NATIVE_ENTER(context)
 
-    NSString* key = KeyForPropertyName(NameForPropertyID(context, propID));
-    if (key != nil) {
-        JSValue value = ValueForMissionVariable(context, key);
-        if (!JS_IsUndefined(value))
-            return value;
-    }
+    PlayerEntity* player = OOPlayerForScripting();
 
-    // Not a mission variable; look in the prototype chain.
-    JSValue prototype = JS_GetPrototype(context, object);
-    if (JS_IsException(prototype))
-        return JS_EXCEPTION;
-
-    JSValue result = JS_UNDEFINED;
-    if (JS_IsObject(prototype)) {
-        int found = (key != nil) ? JS_HasProperty(context, prototype, propID) : YES;
-        if (found < 0) {
-            result = JS_EXCEPTION;
-        } else if (found) {
-            result = JS_GetProperty(context, prototype, propID);
-        } else {
-            // Missing mission variables read as null (OOJSValueFromNativeObject(nil)).
-            result = JS_NULL;
-        }
-    } else if (key != nil) {
-        result = JS_NULL;
+    if (JSID_IS_STRING(propID)) {
+        NSString* key = KeyForPropertyID(context, propID);
+        [player setMissionVariable:nil forKey:key];
     }
-    JS_FreeValue(context, prototype);
-    return result;
+    return YES;
 
     OOJS_NATIVE_EXIT
 }
 
-static BOOL SetMissionVariable(JSContext* context, JSAtom propID, JSValueConst value)
+static JSBool MissionVariablesGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
+    OOJS_NATIVE_ENTER(context)
+
     PlayerEntity* player = OOPlayerForScripting();
 
-    NSString* name = NameForPropertyID(context, propID);
-    if (name != nil) {
-        NSString* key = KeyForPropertyName(name);
+    if (JSID_IS_STRING(propID)) {
+        NSString* key = KeyForPropertyID(context, propID);
+        if (key == nil)
+            return YES;
+
+        id mvar = [player missionVariableForKey:key];
+
+        if ([mvar isKindOfClass:[NSString class]]) // Currently there should only be strings, but we may want to change this.
+        {
+            if (OOIsNumberLiteral(mvar, YES)) {
+                return JS_NewNumberValue(context, [mvar doubleValue], value);
+            }
+        }
+
+        *value = OOJSValueFromNativeObject(context, mvar);
+    }
+    return YES;
+
+    OOJS_NATIVE_EXIT
+}
+
+static JSBool MissionVariablesSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
+{
+    OOJS_NATIVE_ENTER(context)
+
+    PlayerEntity* player = OOPlayerForScripting();
+
+    if (JSID_IS_STRING(propID)) {
+        NSString* key = KeyForPropertyID(context, propID);
         if (key == nil) {
-            OOJSReportError(context, @"Invalid mission variable name \"%@\".", [name escapedForJavaScriptLiteral]);
+            OOJSReportError(context, @"Invalid mission variable name \"%@\".", [OOStringFromJSID(propID) escapedForJavaScriptLiteral]);
             return NO;
         }
 
-        NSString* objValue = OOStringFromJSValue(context, value);
+        NSString* objValue = OOStringFromJSValue(context, *value);
 
         if ([objValue isKindOfClass:[NSNull class]])
             objValue = nil;
         [player setMissionVariable:objValue forKey:key];
     }
     return YES;
+
+    OOJS_NATIVE_EXIT
 }
 
-static int MissionVariablesSetProperty(JSContext* context, JSValueConst object, JSAtom propID, JSValueConst value, JSValueConst receiver, int flags)
+static JSBool MissionVariablesEnumerate(JSContext* context, JSObject* object, JSIterateOp enumOp, jsval* state, jsid* idp)
 {
-    @try {
-        return SetMissionVariable(context, propID, value) ? YES : -1;
-    }
-    @catch (id exception) {
-        OOJSReportWrappedException(context, exception);
-        return -1;
-    }
-}
+    OOJS_NATIVE_ENTER(context)
 
-static int MissionVariablesDefineOwnProperty(JSContext* context, JSValueConst object, JSAtom propID, JSValueConst value, JSValueConst getter, JSValueConst setter, int flags)
-{
-    /*	Object.defineProperty() and friends. Mission variables can't be
-            accessors; a defined value is stored like an assignment.
-    */
-    @try {
-        if (flags & (JS_PROP_HAS_GET | JS_PROP_HAS_SET)) {
-            OOJSReportError(context, @"Invalid mission variable name \"%@\".", [OOStringFromJSID(propID) escapedForJavaScriptLiteral]);
-            return -1;
+    NSEnumerator* enumerator = nil;
+
+    switch (enumOp) {
+    case JSENUMERATE_INIT:
+    case JSENUMERATE_INIT_ALL: // For ES5 Object.getOwnPropertyNames(). Since we have no non-enumerable properties, this is the same as _INIT.
+    {
+        // -allKeys implicitly makes a copy, which is good since the enumerating code might mutate.
+        NSArray* mvars = [[PLAYER missionVariables] allKeys];
+        enumerator = [[mvars objectEnumerator] retain];
+        *state = PRIVATE_TO_JSVAL(enumerator);
+
+        NSUInteger count = [mvars count];
+        assert(count <= INT32_MAX);
+        if (idp != NULL)
+            *idp = INT_TO_JSID((uint32_t)count);
+        return YES;
+    }
+
+    case JSENUMERATE_NEXT: {
+        enumerator = JSVAL_TO_PRIVATE(*state);
+        for (;;) {
+            NSString* next = [enumerator nextObject];
+            if (next == nil)
+                break;
+            if (![next hasPrefix:@"mission_"])
+                continue; // Skip mission instructions, which aren't visible through missionVariables.
+
+            next = [next substringFromIndex:8]; // Cut off "mission_".
+
+            jsval val = [next oo_jsValueInContext:context];
+            return JS_ValueToId(context, val, idp);
         }
-        if (!(flags & JS_PROP_HAS_VALUE))
-            return YES;
-        return SetMissionVariable(context, propID, value) ? YES : -1;
+
+        // If we got here, we've hit the end of the enumerator.
+        *state = JSVAL_NULL;
+        // Fall through.
     }
-    @catch (id exception) {
-        OOJSReportWrappedException(context, exception);
-        return -1;
+
+    case JSENUMERATE_DESTROY: {
+        if (enumerator == nil && JSVAL_IS_DOUBLE(*state)) {
+            enumerator = JSVAL_TO_PRIVATE(*state);
+        }
+        [enumerator release];
+
+        if (idp != NULL)
+            *idp = JSID_VOID;
+        return YES;
     }
+    }
+
+    OOJS_NATIVE_EXIT
 }

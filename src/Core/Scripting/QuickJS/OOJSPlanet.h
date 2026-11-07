@@ -1,6 +1,6 @@
 /*
 
-OOJSPlanet.h (QuickJS-ng)
+OOJSPlanet.h
 
 JavaScript proxy for PlanetEntities.
 
@@ -29,10 +29,8 @@ MA 02110-1301, USA.
 
 #import "OOPlanetEntity.h"
 #import <Foundation/Foundation.h>
-#include <quickjs.h>
+#include <jsapi.h>
 
 @class OOPlanetEntity;
 
-void InitOOJSPlanet(JSContext* context, JSValueConst global);
-
-JSClassID JSPlanetClassID(void);
+void InitOOJSPlanet(JSContext* context, JSObject* global);

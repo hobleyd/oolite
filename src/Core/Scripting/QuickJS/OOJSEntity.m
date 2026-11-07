@@ -1,6 +1,6 @@
 /*
 
-OOJSEntity.m (QuickJS-ng)
+OOJSEntity.m
 
 Oolite
 Copyright (C) 2004-2013 Giles C Williams and contributors
@@ -33,17 +33,27 @@ MA 02110-1301, USA.
 #import "PlayerEntity.h"
 #import "ShipEntity.h"
 
-static JSClassID sEntityClassID;
+JSObject* gOOEntityJSPrototype;
 
-static JSValue EntityGetProperty(OOJS_GETTER_ARGS);
-static JSValue EntitySetProperty(OOJS_SETTER_ARGS);
+static JSBool EntityGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool EntitySetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
 #ifdef OO_DEBUG_MONITOR_ENABLED
-static JSValue EntityDumpState(OOJS_NATIVE_ARGS);
+static JSBool EntityDumpState(JSContext* context, uintN argc, jsval* vp);
 #endif
 
-static JSClassDef sEntityClass = {
-    .class_name = "Entity",
-    .finalizer = OOJSObjectWrapperFinalize,
+JSClass gOOEntityJSClass = {
+    "Entity",
+    JSCLASS_HAS_PRIVATE,
+
+    JS_PropertyStub, // addProperty
+    JS_PropertyStub, // delProperty
+    EntityGetProperty, // getProperty
+    EntitySetProperty, // setProperty
+    JS_EnumerateStub, // enumerate
+    JS_ResolveStub, // resolve
+    JS_ConvertStub, // convert
+    OOJSObjectWrapperFinalize, // finalize
+    JSCLASS_NO_OPTIONAL_MEMBERS
 };
 
 enum {
@@ -75,66 +85,61 @@ enum {
     kEntity_isWormhole, // is visual effect, boolean, read-only.
 };
 
-static const JSCFunctionListEntry sEntityProperties[] = {
-    // JS name, getter, setter, ID
-    OOJS_PROPERTY_RO("collisionRadius", EntityGetProperty, kEntity_collisionRadius),
-    OOJS_PROPERTY_RO("distanceTravelled", EntityGetProperty, kEntity_distanceTravelled),
-    OOJS_PROPERTY_RW("energy", EntityGetProperty, EntitySetProperty, kEntity_energy),
-    OOJS_PROPERTY_RO("heading", EntityGetProperty, kEntity_heading),
-    OOJS_PROPERTY_RO("mass", EntityGetProperty, kEntity_mass),
-    OOJS_PROPERTY_RW("maxEnergy", EntityGetProperty, EntitySetProperty, kEntity_maxEnergy),
-    OOJS_PROPERTY_RW("orientation", EntityGetProperty, EntitySetProperty, kEntity_orientation),
-    OOJS_PROPERTY_RO("owner", EntityGetProperty, kEntity_owner),
-    OOJS_PROPERTY_RW("position", EntityGetProperty, EntitySetProperty, kEntity_position),
-    OOJS_PROPERTY_RW("scanClass", EntityGetProperty, EntitySetProperty, kEntity_scanClass),
-    OOJS_PROPERTY_RO("spawnTime", EntityGetProperty, kEntity_spawnTime),
-    OOJS_PROPERTY_RO("status", EntityGetProperty, kEntity_status),
-    OOJS_PROPERTY_RO("isPlanet", EntityGetProperty, kEntity_isPlanet),
-    OOJS_PROPERTY_RO("isPlayer", EntityGetProperty, kEntity_isPlayer),
-    OOJS_PROPERTY_RO("isShip", EntityGetProperty, kEntity_isShip),
-    OOJS_PROPERTY_RO("isDock", EntityGetProperty, kEntity_isDock),
-    OOJS_PROPERTY_RO("isStation", EntityGetProperty, kEntity_isStation),
-    OOJS_PROPERTY_RO("isSubEntity", EntityGetProperty, kEntity_isSubEntity),
-    OOJS_PROPERTY_RO("isSun", EntityGetProperty, kEntity_isSun),
-    OOJS_PROPERTY_RO("isSunlit", EntityGetProperty, kEntity_isSunlit),
-    OOJS_PROPERTY_RO("isValid", EntityGetProperty, kEntity_isValid),
-    OOJS_PROPERTY_RO("isInSpace", EntityGetProperty, kEntity_isInSpace),
-    OOJS_PROPERTY_RO("isVisible", EntityGetProperty, kEntity_isVisible),
-    OOJS_PROPERTY_RO("isVisualEffect", EntityGetProperty, kEntity_isVisualEffect),
-    OOJS_PROPERTY_RO("isWormhole", EntityGetProperty, kEntity_isWormhole),
+static JSPropertySpec sEntityProperties[] = {
+    // JS name					ID							flags
+    { "collisionRadius", kEntity_collisionRadius, OOJS_PROP_READONLY_CB },
+    { "distanceTravelled", kEntity_distanceTravelled, OOJS_PROP_READONLY_CB },
+    { "energy", kEntity_energy, OOJS_PROP_READWRITE_CB },
+    { "heading", kEntity_heading, OOJS_PROP_READONLY_CB },
+    { "mass", kEntity_mass, OOJS_PROP_READONLY_CB },
+    { "maxEnergy", kEntity_maxEnergy, OOJS_PROP_READWRITE_CB },
+    { "orientation", kEntity_orientation, OOJS_PROP_READWRITE_CB },
+    { "owner", kEntity_owner, OOJS_PROP_READONLY_CB },
+    { "position", kEntity_position, OOJS_PROP_READWRITE_CB },
+    { "scanClass", kEntity_scanClass, OOJS_PROP_READWRITE_CB },
+    { "spawnTime", kEntity_spawnTime, OOJS_PROP_READONLY_CB },
+    { "status", kEntity_status, OOJS_PROP_READONLY_CB },
+    { "isPlanet", kEntity_isPlanet, OOJS_PROP_READONLY_CB },
+    { "isPlayer", kEntity_isPlayer, OOJS_PROP_READONLY_CB },
+    { "isShip", kEntity_isShip, OOJS_PROP_READONLY_CB },
+    { "isDock", kEntity_isDock, OOJS_PROP_READONLY_CB },
+    { "isStation", kEntity_isStation, OOJS_PROP_READONLY_CB },
+    { "isSubEntity", kEntity_isSubEntity, OOJS_PROP_READONLY_CB },
+    { "isSun", kEntity_isSun, OOJS_PROP_READONLY_CB },
+    { "isSunlit", kEntity_isSunlit, OOJS_PROP_READONLY_CB },
+    { "isValid", kEntity_isValid, OOJS_PROP_READONLY_CB },
+    { "isInSpace", kEntity_isInSpace, OOJS_PROP_READONLY_CB },
+    { "isVisible", kEntity_isVisible, OOJS_PROP_READONLY_CB },
+    { "isVisualEffect", kEntity_isVisualEffect, OOJS_PROP_READONLY_CB },
+    { "isWormhole", kEntity_isWormhole, OOJS_PROP_READONLY_CB },
+    { 0 }
 };
 
-static const JSCFunctionListEntry sEntityMethods[] = {
-    // JS name, min args, function
-    JS_CFUNC_DEF("toString", 0, OOJSObjectWrapperToString),
+static JSFunctionSpec sEntityMethods[] = {
+    // JS name					Function					min args
+    { "toString", OOJSObjectWrapperToString, 0 },
 #ifdef OO_DEBUG_MONITOR_ENABLED
-    JS_CFUNC_DEF("dumpState", 0, EntityDumpState),
+    { "dumpState", EntityDumpState, 0 },
 #endif
+    { 0 }
 };
 
-JSClassID JSEntityClassID(void)
+void InitOOJSEntity(JSContext* context, JSObject* global)
 {
-    return sEntityClassID;
+    gOOEntityJSPrototype = JS_InitClass(context, global, NULL, &gOOEntityJSClass, OOJSUnconstructableConstruct, 0, sEntityProperties, sEntityMethods, NULL, NULL);
+    OOJSRegisterObjectConverter(&gOOEntityJSClass, OOJSBasicPrivateObjectConverter);
 }
 
-void InitOOJSEntity(JSContext* context, JSValueConst global)
+BOOL JSValueToEntity(JSContext* context, jsval value, Entity** outEntity)
 {
-    OOJSRegisterClass(&sEntityClassID, &sEntityClass);
-    OOJSInitClass(context, global, sEntityClassID, JS_UNDEFINED, OOJSUnconstructableConstruct, 0,
-        sEntityProperties, OOJS_COUNT(sEntityProperties), sEntityMethods, OOJS_COUNT(sEntityMethods), NULL, 0);
-    OOJSRegisterObjectConverter(sEntityClassID, OOJSBasicPrivateObjectConverter);
-}
-
-BOOL JSValueToEntity(JSContext* context, JSValueConst value, Entity** outEntity)
-{
-    if (JS_IsObject(value)) {
-        return OOJSEntityGetEntity(context, value, outEntity);
+    if (JSVAL_IS_OBJECT(value)) {
+        return OOJSEntityGetEntity(context, JSVAL_TO_OBJECT(value), outEntity);
     }
 
     return NO;
 }
 
-BOOL EntityFromArgumentList(JSContext* context, NSString* scriptClass, NSString* function, int argc, JSValueConst* argv, Entity** outEntity, int* outConsumed)
+BOOL EntityFromArgumentList(JSContext* context, NSString* scriptClass, NSString* function, uintN argc, jsval* argv, Entity** outEntity, uintN* outConsumed)
 {
     OOJS_PROFILE_ENTER
 
@@ -163,44 +168,50 @@ BOOL EntityFromArgumentList(JSContext* context, NSString* scriptClass, NSString*
     OOJS_PROFILE_EXIT
 }
 
-static JSValue EntityGetProperty(OOJS_GETTER_ARGS)
+static JSBool EntityGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     Entity* entity = nil;
     id result = nil;
-    JSValue value = JS_UNDEFINED;
 
     if (EXPECT_NOT(!OOJSEntityGetEntity(context, this, &entity)))
-        return JS_EXCEPTION;
+        return NO;
     if (OOIsStaleEntity(entity)) {
-        if (magic == kEntity_isValid)
-            return JS_FALSE;
-        else
-            return JS_UNDEFINED;
+        if (JSID_TO_INT(propID) == kEntity_isValid)
+            *value = JSVAL_FALSE;
+        else {
+            *value = JSVAL_VOID;
+        }
+        return YES;
     }
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kEntity_collisionRadius:
-        return JS_NewFloat64(context, [entity collisionRadius]);
+        return JS_NewNumberValue(context, [entity collisionRadius], value);
 
     case kEntity_position:
-        OOJS_RETURN_HPVECTOR([entity position]);
+        return HPVectorToJSValue(context, [entity position], value);
 
     case kEntity_orientation:
-        OOJS_RETURN_QUATERNION([entity normalOrientation]);
+        return QuaternionToJSValue(context, [entity normalOrientation], value);
 
     case kEntity_heading:
-        OOJS_RETURN_VECTOR(vector_forward_from_quaternion([entity normalOrientation]));
+        return VectorToJSValue(context, vector_forward_from_quaternion([entity normalOrientation]), value);
 
     case kEntity_status:
-        return OOJSValueFromEntityStatus(context, [entity status]);
+        *value = OOJSValueFromEntityStatus(context, [entity status]);
+        return YES;
 
     case kEntity_scanClass:
-        return OOJSValueFromScanClass(context, [entity scanClass]);
+        *value = OOJSValueFromScanClass(context, [entity scanClass]);
+        return YES;
 
     case kEntity_mass:
-        return JS_NewFloat64(context, [entity mass]);
+        return JS_NewNumberValue(context, [entity mass], value);
 
     case kEntity_owner:
         result = [entity owner];
@@ -209,69 +220,84 @@ static JSValue EntityGetProperty(OOJS_GETTER_ARGS)
         break;
 
     case kEntity_energy:
-        return JS_NewFloat64(context, [entity energy]);
+        return JS_NewNumberValue(context, [entity energy], value);
 
     case kEntity_maxEnergy:
-        return JS_NewFloat64(context, [entity maxEnergy]);
+        return JS_NewNumberValue(context, [entity maxEnergy], value);
 
     case kEntity_isValid:
-        return [entity status] == STATUS_DEAD ? JS_FALSE : JS_TRUE;
+        *value = [entity status] == STATUS_DEAD ? JSVAL_FALSE : JSVAL_TRUE;
+        return YES;
 
     case kEntity_isInSpace:
-        return OOJSValueFromBOOL([entity isInSpace]);
+        *value = OOJSValueFromBOOL([entity isInSpace]);
+        return YES;
 
     case kEntity_isShip:
-        return OOJSValueFromBOOL([entity isShip]);
+        *value = OOJSValueFromBOOL([entity isShip]);
+        return YES;
 
     case kEntity_isStation:
-        return OOJSValueFromBOOL([entity isStation]);
+        *value = OOJSValueFromBOOL([entity isStation]);
+        return YES;
 
     case kEntity_isDock:
-        return OOJSValueFromBOOL([entity isDock]);
+        *value = OOJSValueFromBOOL([entity isDock]);
+        return YES;
 
     case kEntity_isSubEntity:
-        return OOJSValueFromBOOL([entity isSubEntity]);
+        *value = OOJSValueFromBOOL([entity isSubEntity]);
+        return YES;
 
     case kEntity_isPlayer:
-        return OOJSValueFromBOOL([entity isPlayer]);
+        *value = OOJSValueFromBOOL([entity isPlayer]);
+        return YES;
 
     case kEntity_isPlanet:
-        return OOJSValueFromBOOL([entity isPlanet]);
+        *value = OOJSValueFromBOOL([entity isPlanet]);
+        return YES;
 
     case kEntity_isSun:
-        return OOJSValueFromBOOL([entity isSun]);
+        *value = OOJSValueFromBOOL([entity isSun]);
+        return YES;
 
     case kEntity_isSunlit:
-        return OOJSValueFromBOOL([entity isSunlit]);
+        *value = OOJSValueFromBOOL([entity isSunlit]);
+        return YES;
 
     case kEntity_isVisible:
-        return OOJSValueFromBOOL([entity isVisible]);
+        *value = OOJSValueFromBOOL([entity isVisible]);
+        return YES;
 
     case kEntity_isVisualEffect:
-        return OOJSValueFromBOOL([entity isVisualEffect]);
+        *value = OOJSValueFromBOOL([entity isVisualEffect]);
+        return YES;
 
     case kEntity_isWormhole:
-        return OOJSValueFromBOOL([entity isWormhole]);
+        *value = OOJSValueFromBOOL([entity isWormhole]);
+        return YES;
 
     case kEntity_distanceTravelled:
-        return JS_NewFloat64(context, [entity distanceTravelled]);
+        return JS_NewNumberValue(context, [entity distanceTravelled], value);
 
     case kEntity_spawnTime:
-        return JS_NewFloat64(context, [entity spawnTime]);
+        return JS_NewNumberValue(context, [entity spawnTime], value);
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sEntityProperties, OOJS_COUNT(sEntityProperties));
-        return JS_EXCEPTION;
+        OOJSReportBadPropertySelector(context, this, propID, sEntityProperties);
     }
 
-    value = OOJSValueFromNativeObject(context, result);
-    return value;
+    *value = OOJSValueFromNativeObject(context, result);
+    return YES;
 
     OOJS_NATIVE_EXIT
 }
 
-static JSValue EntitySetProperty(OOJS_SETTER_ARGS)
+static JSBool EntitySetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     Entity* entity = nil;
@@ -280,76 +306,74 @@ static JSValue EntitySetProperty(OOJS_SETTER_ARGS)
     Quaternion qValue;
 
     if (EXPECT_NOT(!OOJSEntityGetEntity(context, this, &entity)))
-        return JS_EXCEPTION;
+        return NO;
     if (OOIsStaleEntity(entity))
-        return JS_UNDEFINED;
+        return YES;
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kEntity_position:
-        if (JSValueToHPVector(context, value, &hpvValue)) {
+        if (JSValueToHPVector(context, *value, &hpvValue)) {
             [entity setPosition:hpvValue];
             if ([entity isShip]) {
                 [(ShipEntity*)entity resetExhaustPlumes];
                 [(ShipEntity*)entity forceAegisCheck];
             }
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kEntity_orientation:
-        if (JSValueToQuaternion(context, value, &qValue)) {
+        if (JSValueToQuaternion(context, *value, &qValue)) {
             [entity setNormalOrientation:qValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kEntity_energy:
-        if (JS_ToFloat64(context, &fValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &fValue)) {
             fValue = OOClamp_0_max_d(fValue, [entity maxEnergy]);
             [entity setEnergy:fValue];
-            return JS_UNDEFINED;
+            return YES;
         }
-        JS_FreeValue(context, JS_GetException(context));
         break;
 
     case kEntity_maxEnergy:
-        if (JS_ToFloat64(context, &fValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &fValue)) {
             if (fValue <= 0.0) {
                 OOJSReportError(context, @"entity.maxEnergy must be positive.");
-                return JS_EXCEPTION;
+                return NO;
             }
             [entity setMaxEnergy:fValue];
-            return JS_UNDEFINED;
+            return YES;
         }
-        JS_FreeValue(context, JS_GetException(context));
         break;
 
     case kEntity_scanClass:
         if ([entity isShip] && ![entity isPlayer]) {
-            OOScanClass newClass = OOScanClassFromJSValue(context, value);
+            OOScanClass newClass = OOScanClassFromJSValue(context, *value);
             if (newClass == CLASS_NOT_SET || newClass == CLASS_NO_DRAW || newClass == CLASS_TARGET || newClass == CLASS_WORMHOLE || newClass == CLASS_PLAYER || newClass == CLASS_VISUAL_EFFECT) {
                 OOJSReportError(context, @"entity.scanClass cannot be set to that value.");
-                return JS_EXCEPTION;
+                return NO;
             }
             [entity setScanClass:newClass];
-            return JS_UNDEFINED;
+            return YES;
         } else {
             OOJSReportError(context, @"entity.scanClass is read-only except on NPC ships.");
-            return JS_EXCEPTION;
+            return NO;
         }
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sEntityProperties, OOJS_COUNT(sEntityProperties));
-        return JS_EXCEPTION;
+        OOJSReportBadPropertySelector(context, this, propID, sEntityProperties);
+        return NO;
     }
 
-    OOJSReportBadPropertyValue(context, this, magic, sEntityProperties, OOJS_COUNT(sEntityProperties), value);
-    return JS_EXCEPTION;
+    OOJSReportBadPropertyValue(context, this, propID, sEntityProperties, *value);
+    return NO;
 
     OOJS_NATIVE_EXIT
 }
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
-static JSValue EntityDumpState(OOJS_NATIVE_ARGS)
+static JSBool EntityDumpState(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_PROFILE_ENTER
 

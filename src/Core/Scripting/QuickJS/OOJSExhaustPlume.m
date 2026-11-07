@@ -1,5 +1,5 @@
 /*
-OOJSExhaustPlume.m (QuickJS-ng)
+OOJSExhaustPlume.m
 
 Oolite
 Copyright (C) 2004-2013 Giles C Williams and contributors
@@ -29,18 +29,28 @@ MA 02110-1301, USA.
 #import "OOJavaScriptEngine.h"
 #import "ShipEntity.h"
 
-static JSClassID sExhaustPlumeClassID;
+static JSObject* sExhaustPlumePrototype;
 
-static BOOL JSExhaustPlumeGetExhaustPlumeEntity(JSContext* context, JSValueConst jsobj, OOExhaustPlumeEntity** outEntity);
+static BOOL JSExhaustPlumeGetExhaustPlumeEntity(JSContext* context, JSObject* jsobj, OOExhaustPlumeEntity** outEntity);
 
-static JSValue ExhaustPlumeGetProperty(OOJS_GETTER_ARGS);
-static JSValue ExhaustPlumeSetProperty(OOJS_SETTER_ARGS);
+static JSBool ExhaustPlumeGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool ExhaustPlumeSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
 
-static JSValue ExhaustPlumeRemove(OOJS_NATIVE_ARGS);
+static JSBool ExhaustPlumeRemove(JSContext* context, uintN argc, jsval* vp);
 
-static JSClassDef sExhaustPlumeClass = {
-    .class_name = "ExhaustPlume",
-    .finalizer = OOJSObjectWrapperFinalize,
+static JSClass sExhaustPlumeClass = {
+    "ExhaustPlume",
+    JSCLASS_HAS_PRIVATE,
+
+    JS_PropertyStub, // addProperty
+    JS_PropertyStub, // delProperty
+    ExhaustPlumeGetProperty, // getProperty
+    ExhaustPlumeSetProperty, // setProperty
+    JS_EnumerateStub, // enumerate
+    JS_ResolveStub, // resolve
+    JS_ConvertStub, // convert
+    OOJSObjectWrapperFinalize, // finalize
+    JSCLASS_NO_OPTIONAL_MEMBERS
 };
 
 enum {
@@ -48,36 +58,27 @@ enum {
     kExhaustPlume_size
 };
 
-static const JSCFunctionListEntry sExhaustPlumeProperties[] = {
-    // JS name, getter, setter, ID
-    OOJS_PROPERTY_RW("size", ExhaustPlumeGetProperty, ExhaustPlumeSetProperty, kExhaustPlume_size),
+static JSPropertySpec sExhaustPlumeProperties[] = {
+    // JS name						ID									flags
+    { "size", kExhaustPlume_size, OOJS_PROP_READWRITE_CB },
+    { 0 }
 };
 
-static const JSCFunctionListEntry sExhaustPlumeMethods[] = {
-    // JS name, min args, function
-    JS_CFUNC_DEF("remove", 0, ExhaustPlumeRemove),
+static JSFunctionSpec sExhaustPlumeMethods[] = {
+    // JS name					Function						min args
+    { "remove", ExhaustPlumeRemove, 0 },
+
+    { 0 }
 };
 
-void InitOOJSExhaustPlume(JSContext* context, JSValueConst global)
+void InitOOJSExhaustPlume(JSContext* context, JSObject* global)
 {
-    OOJSRegisterClass(&sExhaustPlumeClassID, &sExhaustPlumeClass);
-
-    JSValue parentPrototype = JS_GetClassProto(context, JSEntityClassID());
-    NSCAssert(JS_IsObject(parentPrototype), @"Entity must be initialized before ExhaustPlume.");
-    OOJSInitClass(context, global, sExhaustPlumeClassID, parentPrototype, OOJSUnconstructableConstruct, 0,
-        sExhaustPlumeProperties, OOJS_COUNT(sExhaustPlumeProperties), sExhaustPlumeMethods, OOJS_COUNT(sExhaustPlumeMethods), NULL, 0);
-    JS_FreeValue(context, parentPrototype);
-
-    OOJSRegisterObjectConverter(sExhaustPlumeClassID, OOJSBasicPrivateObjectConverter);
-    OOJSRegisterSubclass(sExhaustPlumeClassID, JSEntityClassID());
+    sExhaustPlumePrototype = JS_InitClass(context, global, JSEntityPrototype(), &sExhaustPlumeClass, OOJSUnconstructableConstruct, 0, sExhaustPlumeProperties, sExhaustPlumeMethods, NULL, NULL);
+    OOJSRegisterObjectConverter(&sExhaustPlumeClass, OOJSBasicPrivateObjectConverter);
+    OOJSRegisterSubclass(&sExhaustPlumeClass, JSEntityClass());
 }
 
-JSClassID JSExhaustPlumeClassID(void)
-{
-    return sExhaustPlumeClassID;
-}
-
-static BOOL JSExhaustPlumeGetExhaustPlumeEntity(JSContext* context, JSValueConst jsobj, OOExhaustPlumeEntity** outEntity)
+static BOOL JSExhaustPlumeGetExhaustPlumeEntity(JSContext* context, JSObject* jsobj, OOExhaustPlumeEntity** outEntity)
 {
     OOJS_PROFILE_ENTER
 
@@ -103,9 +104,10 @@ static BOOL JSExhaustPlumeGetExhaustPlumeEntity(JSContext* context, JSValueConst
 
 @implementation OOExhaustPlumeEntity (OOJavaScriptExtensions)
 
-- (JSClassID)oo_jsClassID
+- (void)getJSClass:(JSClass**)outClass andPrototype:(JSObject**)outPrototype
 {
-    return sExhaustPlumeClassID;
+    *outClass = &sExhaustPlumeClass;
+    *outPrototype = sExhaustPlumePrototype;
 }
 
 - (NSString*)oo_jsClassName
@@ -120,60 +122,68 @@ static BOOL JSExhaustPlumeGetExhaustPlumeEntity(JSContext* context, JSValueConst
 
 @end
 
-static JSValue ExhaustPlumeGetProperty(OOJS_GETTER_ARGS)
+static JSBool ExhaustPlumeGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     OOExhaustPlumeEntity* entity = nil;
     id result = nil;
 
     if (!JSExhaustPlumeGetExhaustPlumeEntity(context, this, &entity))
-        return OOJSNativeFailure(context);
+        return NO;
     if (entity == nil) {
-        return JS_UNDEFINED;
+        *value = JSVAL_VOID;
+        return YES;
     }
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kExhaustPlume_size:
-        OOJS_RETURN_VECTOR([entity scale]);
+        return VectorToJSValue(context, [entity scale], value);
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sExhaustPlumeProperties, OOJS_COUNT(sExhaustPlumeProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sExhaustPlumeProperties);
+        return NO;
     }
 
-    return OOJSValueFromNativeObject(context, result);
+    *value = OOJSValueFromNativeObject(context, result);
+    return YES;
 
     OOJS_NATIVE_EXIT
 }
 
-static JSValue ExhaustPlumeSetProperty(OOJS_SETTER_ARGS)
+static JSBool ExhaustPlumeSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     OOExhaustPlumeEntity* entity = nil;
     Vector vValue;
 
     if (!JSExhaustPlumeGetExhaustPlumeEntity(context, this, &entity))
-        return OOJSNativeFailure(context);
+        return NO;
     if (entity == nil)
-        return JS_UNDEFINED;
+        return YES;
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kExhaustPlume_size:
-        if (JSValueToVector(context, value, &vValue)) {
+        if (JSValueToVector(context, *value, &vValue)) {
             [entity setScale:vValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sExhaustPlumeProperties, OOJS_COUNT(sExhaustPlumeProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sExhaustPlumeProperties);
+        return NO;
     }
 
-    OOJSReportBadPropertyValue(context, this, magic, sExhaustPlumeProperties, OOJS_COUNT(sExhaustPlumeProperties), value);
-    return OOJSNativeFailure(context);
+    OOJSReportBadPropertyValue(context, this, propID, sExhaustPlumeProperties, *value);
+    return NO;
 
     OOJS_NATIVE_EXIT
 }
@@ -183,12 +193,12 @@ static JSValue ExhaustPlumeSetProperty(OOJS_SETTER_ARGS)
 #define GET_THIS_EXHAUSTPLUME(THISENT)                                                      \
     do {                                                                                    \
         if (EXPECT_NOT(!JSExhaustPlumeGetExhaustPlumeEntity(context, OOJS_THIS, &THISENT))) \
-            return OOJSNativeFailure(context); /* Exception */                              \
+            return NO; /* Exception */                                                      \
         if (OOIsStaleEntity(THISENT))                                                       \
             OOJS_RETURN_VOID;                                                               \
     } while (0)
 
-static JSValue ExhaustPlumeRemove(OOJS_NATIVE_ARGS)
+static JSBool ExhaustPlumeRemove(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 

@@ -1,6 +1,6 @@
 /*
 
-OOJSPlayer.m (QuickJS-ng)
+OOJSPlayer.h
 
 Oolite
 Copyright (C) 2004-2013 Giles C Williams and contributors
@@ -38,31 +38,42 @@ MA 02110-1301, USA.
 #import "OOFunctionAttributes.h"
 #import "OOStringParsing.h"
 
-static JSClassID sPlayerClassID;
+static JSObject* sPlayerPrototype;
+static JSObject* sPlayerObject;
 
-static JSClassDef sPlayerClass = {
-    .class_name = "Player",
-    .finalizer = OOJSObjectWrapperFinalize,
+static JSBool PlayerGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool PlayerSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
+
+static JSBool PlayerAddMessageToArrivalReport(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerAudioMessage(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerCommsMessage(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerConsoleMessage(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerEndScenario(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerIncreaseContractReputation(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerDecreaseContractReputation(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerIncreasePassengerReputation(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerDecreasePassengerReputation(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerIncreaseParcelReputation(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerDecreaseParcelReputation(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerReplaceShip(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerSetEscapePodDestination(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerSetPlayerRole(JSContext* context, uintN argc, jsval* vp);
+static JSBool PlayerStopAudioMessage(JSContext* context, uintN argc, jsval* vp);
+
+static JSClass sPlayerClass = {
+    "Player",
+    JSCLASS_HAS_PRIVATE,
+
+    JS_PropertyStub, // addProperty
+    JS_PropertyStub, // delProperty
+    PlayerGetProperty, // getProperty
+    PlayerSetProperty, // setProperty
+    JS_EnumerateStub, // enumerate
+    JS_ResolveStub, // resolve
+    JS_ConvertStub, // convert
+    OOJSObjectWrapperFinalize, // finalize
+    JSCLASS_NO_OPTIONAL_MEMBERS
 };
-
-static JSValue PlayerGetProperty(OOJS_GETTER_ARGS);
-static JSValue PlayerSetProperty(OOJS_SETTER_ARGS);
-
-static JSValue PlayerAddMessageToArrivalReport(OOJS_NATIVE_ARGS);
-static JSValue PlayerAudioMessage(OOJS_NATIVE_ARGS);
-static JSValue PlayerCommsMessage(OOJS_NATIVE_ARGS);
-static JSValue PlayerConsoleMessage(OOJS_NATIVE_ARGS);
-static JSValue PlayerEndScenario(OOJS_NATIVE_ARGS);
-static JSValue PlayerIncreaseContractReputation(OOJS_NATIVE_ARGS);
-static JSValue PlayerDecreaseContractReputation(OOJS_NATIVE_ARGS);
-static JSValue PlayerIncreasePassengerReputation(OOJS_NATIVE_ARGS);
-static JSValue PlayerDecreasePassengerReputation(OOJS_NATIVE_ARGS);
-static JSValue PlayerIncreaseParcelReputation(OOJS_NATIVE_ARGS);
-static JSValue PlayerDecreaseParcelReputation(OOJS_NATIVE_ARGS);
-static JSValue PlayerReplaceShip(OOJS_NATIVE_ARGS);
-static JSValue PlayerSetEscapePodDestination(OOJS_NATIVE_ARGS);
-static JSValue PlayerSetPlayerRole(OOJS_NATIVE_ARGS);
-static JSValue PlayerStopAudioMessage(OOJS_NATIVE_ARGS);
 
 enum {
     // Property IDs
@@ -90,82 +101,75 @@ enum {
     kPlayer_trumbleCount, // number of trumbles, integer, read-only
 };
 
-static const JSCFunctionListEntry sPlayerProperties[] = {
-    // JS name, getter, setter, ID
-    OOJS_PROPERTY_RO("alertAltitude", PlayerGetProperty, kPlayer_alertAltitude),
-    OOJS_PROPERTY_RO("alertCondition", PlayerGetProperty, kPlayer_alertCondition),
-    OOJS_PROPERTY_RO("alertEnergy", PlayerGetProperty, kPlayer_alertEnergy),
-    OOJS_PROPERTY_RO("alertHostiles", PlayerGetProperty, kPlayer_alertHostiles),
-    OOJS_PROPERTY_RO("alertMassLocked", PlayerGetProperty, kPlayer_alertMassLocked),
-    OOJS_PROPERTY_RO("alertTemperature", PlayerGetProperty, kPlayer_alertTemperature),
-    OOJS_PROPERTY_RW("bounty", PlayerGetProperty, PlayerSetProperty, kPlayer_bounty),
-    OOJS_PROPERTY_RO("contractReputation", PlayerGetProperty, kPlayer_contractReputation),
-    OOJS_PROPERTY_RO("contractReputationPrecise", PlayerGetProperty, kPlayer_contractReputationPrecise),
-    OOJS_PROPERTY_RW("credits", PlayerGetProperty, PlayerSetProperty, kPlayer_credits),
-    OOJS_PROPERTY_RO("dockingClearanceStatus", PlayerGetProperty, kPlayer_dockingClearanceStatus),
-    OOJS_PROPERTY_RW("escapePodRescueTime", PlayerGetProperty, PlayerSetProperty, kPlayer_escapePodRescueTime),
-    OOJS_PROPERTY_RO("legalStatus", PlayerGetProperty, kPlayer_legalStatus),
-    OOJS_PROPERTY_RW("name", PlayerGetProperty, PlayerSetProperty, kPlayer_name),
-    OOJS_PROPERTY_RO("parcelReputation", PlayerGetProperty, kPlayer_parcelReputation),
-    OOJS_PROPERTY_RO("parcelReputationPrecise", PlayerGetProperty, kPlayer_parcelReputationPrecise),
-    OOJS_PROPERTY_RO("passengerReputation", PlayerGetProperty, kPlayer_passengerReputation),
-    OOJS_PROPERTY_RO("passengerReputationPrecise", PlayerGetProperty, kPlayer_passengerReputationPrecise),
-    OOJS_PROPERTY_RO("rank", PlayerGetProperty, kPlayer_rank),
-    OOJS_PROPERTY_RO("roleWeights", PlayerGetProperty, kPlayer_roleWeights),
-    OOJS_PROPERTY_RW("score", PlayerGetProperty, PlayerSetProperty, kPlayer_score),
-    OOJS_PROPERTY_RO("trumbleCount", PlayerGetProperty, kPlayer_trumbleCount),
+static JSPropertySpec sPlayerProperties[] = {
+    // JS name					ID							flags
+    { "alertAltitude", kPlayer_alertAltitude, OOJS_PROP_READONLY_CB },
+    { "alertCondition", kPlayer_alertCondition, OOJS_PROP_READONLY_CB },
+    { "alertEnergy", kPlayer_alertEnergy, OOJS_PROP_READONLY_CB },
+    { "alertHostiles", kPlayer_alertHostiles, OOJS_PROP_READONLY_CB },
+    { "alertMassLocked", kPlayer_alertMassLocked, OOJS_PROP_READONLY_CB },
+    { "alertTemperature", kPlayer_alertTemperature, OOJS_PROP_READONLY_CB },
+    { "bounty", kPlayer_bounty, OOJS_PROP_READWRITE_CB },
+    { "contractReputation", kPlayer_contractReputation, OOJS_PROP_READONLY_CB },
+    { "contractReputationPrecise", kPlayer_contractReputationPrecise, OOJS_PROP_READONLY_CB },
+    { "credits", kPlayer_credits, OOJS_PROP_READWRITE_CB },
+    { "dockingClearanceStatus", kPlayer_dockingClearanceStatus, OOJS_PROP_READONLY_CB },
+    { "escapePodRescueTime", kPlayer_escapePodRescueTime, OOJS_PROP_READWRITE_CB },
+    { "legalStatus", kPlayer_legalStatus, OOJS_PROP_READONLY_CB },
+    { "name", kPlayer_name, OOJS_PROP_READWRITE_CB },
+    { "parcelReputation", kPlayer_parcelReputation, OOJS_PROP_READONLY_CB },
+    { "parcelReputationPrecise", kPlayer_parcelReputationPrecise, OOJS_PROP_READONLY_CB },
+    { "passengerReputation", kPlayer_passengerReputation, OOJS_PROP_READONLY_CB },
+    { "passengerReputationPrecise", kPlayer_passengerReputationPrecise, OOJS_PROP_READONLY_CB },
+    { "rank", kPlayer_rank, OOJS_PROP_READONLY_CB },
+    { "roleWeights", kPlayer_roleWeights, OOJS_PROP_READONLY_CB },
+    { "score", kPlayer_score, OOJS_PROP_READWRITE_CB },
+    { "trumbleCount", kPlayer_trumbleCount, OOJS_PROP_READONLY_CB },
+    { 0 }
 };
 
-static const JSCFunctionListEntry sPlayerMethods[] = {
-    // JS name, min args, function
-    JS_CFUNC_DEF("addMessageToArrivalReport", 1, PlayerAddMessageToArrivalReport),
-    JS_CFUNC_DEF("audioMessage", 1, PlayerAudioMessage),
-    JS_CFUNC_DEF("commsMessage", 1, PlayerCommsMessage),
-    JS_CFUNC_DEF("consoleMessage", 1, PlayerConsoleMessage),
-    JS_CFUNC_DEF("decreaseContractReputation", 0, PlayerDecreaseContractReputation),
-    JS_CFUNC_DEF("decreaseParcelReputation", 0, PlayerDecreaseParcelReputation),
-    JS_CFUNC_DEF("decreasePassengerReputation", 0, PlayerDecreasePassengerReputation),
-    JS_CFUNC_DEF("endScenario", 1, PlayerEndScenario),
-    JS_CFUNC_DEF("increaseContractReputation", 0, PlayerIncreaseContractReputation),
-    JS_CFUNC_DEF("increaseParcelReputation", 0, PlayerIncreaseParcelReputation),
-    JS_CFUNC_DEF("increasePassengerReputation", 0, PlayerIncreasePassengerReputation),
-    JS_CFUNC_DEF("replaceShip", 1, PlayerReplaceShip),
-    JS_CFUNC_DEF("setEscapePodDestination", 1, PlayerSetEscapePodDestination), // null destination must be set explicitly
-    JS_CFUNC_DEF("setPlayerRole", 1, PlayerSetPlayerRole),
-    JS_CFUNC_DEF("stopAudioMessage", 0, PlayerStopAudioMessage),
+static JSFunctionSpec sPlayerMethods[] = {
+    // JS name							Function							min args
+    { "addMessageToArrivalReport", PlayerAddMessageToArrivalReport, 1 },
+    { "audioMessage", PlayerAudioMessage, 1 },
+    { "commsMessage", PlayerCommsMessage, 1 },
+    { "consoleMessage", PlayerConsoleMessage, 1 },
+    { "decreaseContractReputation", PlayerDecreaseContractReputation, 0 },
+    { "decreaseParcelReputation", PlayerDecreaseParcelReputation, 0 },
+    { "decreasePassengerReputation", PlayerDecreasePassengerReputation, 0 },
+    { "endScenario", PlayerEndScenario, 1 },
+    { "increaseContractReputation", PlayerIncreaseContractReputation, 0 },
+    { "increaseParcelReputation", PlayerIncreaseParcelReputation, 0 },
+    { "increasePassengerReputation", PlayerIncreasePassengerReputation, 0 },
+    { "replaceShip", PlayerReplaceShip, 1 },
+    { "setEscapePodDestination", PlayerSetEscapePodDestination, 1 }, // null destination must be set explicitly
+    { "setPlayerRole", PlayerSetPlayerRole, 1 },
+    { "stopAudioMessage", PlayerStopAudioMessage, 0 },
+    { 0 }
 };
 
-void InitOOJSPlayer(JSContext* context, JSValueConst global)
+void InitOOJSPlayer(JSContext* context, JSObject* global)
 {
-    OOJSRegisterClass(&sPlayerClassID, &sPlayerClass);
-    OOJSInitClass(context, global, sPlayerClassID, JS_UNDEFINED, OOJSUnconstructableConstruct, 0,
-        sPlayerProperties, OOJS_COUNT(sPlayerProperties), sPlayerMethods, OOJS_COUNT(sPlayerMethods), NULL, 0);
-    OOJSRegisterObjectConverter(sPlayerClassID, OOJSBasicPrivateObjectConverter);
+    sPlayerPrototype = JS_InitClass(context, global, NULL, &sPlayerClass, OOJSUnconstructableConstruct, 0, sPlayerProperties, sPlayerMethods, NULL, NULL);
+    OOJSRegisterObjectConverter(&sPlayerClass, OOJSBasicPrivateObjectConverter);
 
-    /*	Create player object as a property of the global object. As before, it
-            has no private data. The global object owns the only reference; the
-            property is read-only and permanent, so JSPlayerObject() can look it
-            up there rather than keeping a reference that must be dropped on
-            reset.
-    */
-    JSValue playerObject = JS_NewObjectClass(context, (int)sPlayerClassID);
-    JS_DefinePropertyValueStr(context, global, "player", playerObject, OOJS_PROP_READONLY);
+    // Create player object as a property of the global object.
+    sPlayerObject = JS_DefineObject(context, global, "player", &sPlayerClass, sPlayerPrototype, OOJS_PROP_READONLY);
 }
 
-JSClassID JSPlayerClassID(void)
+JSClass* JSPlayerClass(void)
 {
-    return sPlayerClassID;
+    return &sPlayerClass;
 }
 
-JSValue JSPlayerObject(void)
+JSObject* JSPlayerPrototype(void)
 {
-    JSContext* context = OOJSAcquireContext();
-    // Not -[OOJavaScriptEngine globalObject]: this is used while the engine is being set up.
-    JSValue global = JS_GetGlobalObject(context);
-    JSValue result = JS_GetPropertyStr(context, global, "player");
-    JS_FreeValue(context, global);
-    OOJSRelinquishContext(context);
-    return result;
+    return sPlayerPrototype;
+}
+
+JSObject* JSPlayerObject(void)
+{
+    return sPlayerObject;
 }
 
 PlayerEntity* OOPlayerForScripting(void)
@@ -176,152 +180,170 @@ PlayerEntity* OOPlayerForScripting(void)
     return player;
 }
 
-static JSValue PlayerGetProperty(OOJS_GETTER_ARGS)
+static JSBool PlayerGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     id result = nil;
     PlayerEntity* player = OOPlayerForScripting();
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kPlayer_name:
         result = [player commanderName];
         break;
 
     case kPlayer_score:
-        return JS_NewInt32(context, [player score]);
+        *value = INT_TO_JSVAL([player score]);
+        return YES;
 
     case kPlayer_credits:
-        return JS_NewNumber(context, [player creditBalance]);
+        return JS_NewNumberValue(context, [player creditBalance], value);
 
     case kPlayer_rank:
-        return OOJSValueFromNativeObject(context, OODisplayRatingStringFromKillCount([player score]));
+        *value = OOJSValueFromNativeObject(context, OODisplayRatingStringFromKillCount([player score]));
+        return YES;
 
     case kPlayer_legalStatus:
-        return OOJSValueFromNativeObject(context, OODisplayStringFromLegalStatus([player legalStatus]));
+        *value = OOJSValueFromNativeObject(context, OODisplayStringFromLegalStatus([player legalStatus]));
+        return YES;
 
     case kPlayer_alertCondition:
-        return JS_NewInt32(context, [player alertCondition]);
+        *value = INT_TO_JSVAL([player alertCondition]);
+        return YES;
 
     case kPlayer_alertTemperature:
-        return OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_TEMP);
+        *value = OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_TEMP);
+        return YES;
 
     case kPlayer_alertMassLocked:
-        return OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_MASS_LOCK);
+        *value = OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_MASS_LOCK);
+        return YES;
 
     case kPlayer_alertAltitude:
-        return OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_ALT);
+        *value = OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_ALT);
+        return YES;
 
     case kPlayer_alertEnergy:
-        return OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_ENERGY);
+        *value = OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_ENERGY);
+        return YES;
 
     case kPlayer_alertHostiles:
-        return OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_HOSTILES);
+        *value = OOJSValueFromBOOL([player alertFlags] & ALERT_FLAG_HOSTILES);
+        return YES;
 
     case kPlayer_escapePodRescueTime:
-        return JS_NewNumber(context, [player escapePodRescueTime]);
+        return JS_NewNumberValue(context, [player escapePodRescueTime], value);
 
     case kPlayer_trumbleCount:
-        return JS_NewNumber(context, [player trumbleCount]);
+        return JS_NewNumberValue(context, [player trumbleCount], value);
 
         /* For compatibility with previous versions, these are still on
          * a -7 to +7 scale */
     case kPlayer_contractReputation:
-        return JS_NewNumber(context, (int)(((float)[player contractReputation]) / 10.0));
+        return JS_NewNumberValue(context, (int)(((float)[player contractReputation]) / 10.0), value);
 
     case kPlayer_passengerReputation:
-        return JS_NewNumber(context, (int)(((float)[player passengerReputation]) / 10.0));
+        return JS_NewNumberValue(context, (int)(((float)[player passengerReputation]) / 10.0), value);
 
     case kPlayer_parcelReputation:
-        return JS_NewNumber(context, (int)(((float)[player parcelReputation]) / 10.0));
+        return JS_NewNumberValue(context, (int)(((float)[player parcelReputation]) / 10.0), value);
 
         /* Full-precision reputations */
     case kPlayer_contractReputationPrecise:
-        return JS_NewNumber(context, ((float)[player contractReputation]) / 10.0);
+        return JS_NewNumberValue(context, ((float)[player contractReputation]) / 10.0, value);
 
     case kPlayer_passengerReputationPrecise:
-        return JS_NewNumber(context, ((float)[player passengerReputation]) / 10.0);
+        return JS_NewNumberValue(context, ((float)[player passengerReputation]) / 10.0, value);
 
     case kPlayer_parcelReputationPrecise:
-        return JS_NewNumber(context, ((float)[player parcelReputation]) / 10.0);
+        return JS_NewNumberValue(context, ((float)[player parcelReputation]) / 10.0, value);
 
     case kPlayer_dockingClearanceStatus:
         // EMMSTRAN: OOConstToJSString-ify this.
-        return OOJSValueFromNativeObject(context, DockingClearanceStatusToString([player getDockingClearanceStatus]));
+        *value = OOJSValueFromNativeObject(context, DockingClearanceStatusToString([player getDockingClearanceStatus]));
+        return YES;
 
     case kPlayer_bounty:
-        return JS_NewInt32(context, [player legalStatus]);
+        *value = INT_TO_JSVAL([player legalStatus]);
+        return YES;
 
     case kPlayer_roleWeights:
         result = [player roleWeights];
         break;
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sPlayerProperties, OOJS_COUNT(sPlayerProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sPlayerProperties);
+        return NO;
     }
 
-    return OOJSValueFromNativeObject(context, result);
+    *value = OOJSValueFromNativeObject(context, result);
+    return YES;
 
     OOJS_NATIVE_EXIT
 }
 
-static JSValue PlayerSetProperty(OOJS_SETTER_ARGS)
+static JSBool PlayerSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     PlayerEntity* player = OOPlayerForScripting();
-    double fValue;
-    int32_t iValue;
+    jsdouble fValue;
+    int32 iValue;
     NSString* sValue;
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kPlayer_name:
-        sValue = OOStringFromJSValue(context, value);
+        sValue = OOStringFromJSValue(context, *value);
         if (sValue != nil) {
             [player setCommanderName:sValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlayer_score:
-        if (OOJSValueToInt32(context, value, &iValue)) {
+        if (JS_ValueToInt32(context, *value, &iValue)) {
             iValue = MAX(iValue, 0);
             [player setScore:iValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlayer_credits:
-        if (JS_ToFloat64(context, &fValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &fValue)) {
             [player setCreditBalance:fValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlayer_bounty:
-        if (OOJSValueToInt32(context, value, &iValue)) {
+        if (JS_ValueToInt32(context, *value, &iValue)) {
             if (iValue < 0)
                 iValue = 0;
             [player setBounty:iValue withReason:kOOLegalStatusReasonByScript];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlayer_escapePodRescueTime:
-        if (JS_ToFloat64(context, &fValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &fValue)) {
             [player setEscapePodRescueTime:fValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sPlayerProperties, OOJS_COUNT(sPlayerProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sPlayerProperties);
+        return NO;
     }
 
-    OOJSReportBadPropertyValue(context, this, magic, sPlayerProperties, OOJS_COUNT(sPlayerProperties), value);
-    return OOJSNativeFailure(context);
+    OOJSReportBadPropertyValue(context, this, propID, sPlayerProperties, *value);
+    return NO;
 
     OOJS_NATIVE_EXIT
 }
@@ -329,7 +351,7 @@ static JSValue PlayerSetProperty(OOJS_SETTER_ARGS)
 // *** Methods ***
 
 // commsMessage(message : String [, duration : Number])
-static JSValue PlayerCommsMessage(OOJS_NATIVE_ARGS)
+static JSBool PlayerCommsMessage(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -340,10 +362,10 @@ static JSValue PlayerCommsMessage(OOJS_NATIVE_ARGS)
     if (argc > 0)
         message = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (argc > 1)
-        gotTime = (JS_ToFloat64(context, &time, OOJS_ARGV[1]) == 0);
+        gotTime = JS_ValueToNumber(context, OOJS_ARGV[1], &time);
     if (message == nil || !gotTime) {
         OOJSReportBadArguments(context, @"Player", @"commsMessage", argc, OOJS_ARGV, nil, @"message and optional duration");
-        return OOJSNativeFailure(context);
+        return NO;
     }
 
     [UNIVERSE addCommsMessage:message forCount:time];
@@ -354,7 +376,7 @@ static JSValue PlayerCommsMessage(OOJS_NATIVE_ARGS)
 }
 
 // consoleMessage(message : String [, duration : Number])
-static JSValue PlayerConsoleMessage(OOJS_NATIVE_ARGS)
+static JSBool PlayerConsoleMessage(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -365,10 +387,10 @@ static JSValue PlayerConsoleMessage(OOJS_NATIVE_ARGS)
     if (argc > 0)
         message = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (argc > 1)
-        gotTime = (JS_ToFloat64(context, &time, OOJS_ARGV[1]) == 0);
+        gotTime = JS_ValueToNumber(context, OOJS_ARGV[1], &time);
     if (message == nil || !gotTime) {
         OOJSReportBadArguments(context, @"Player", @"consoleMessage", argc, OOJS_ARGV, nil, @"message and optional duration");
-        return OOJSNativeFailure(context);
+        return NO;
     }
 
     [UNIVERSE addMessage:message forCount:time];
@@ -378,7 +400,7 @@ static JSValue PlayerConsoleMessage(OOJS_NATIVE_ARGS)
 }
 
 // endScenario(scenario : String)
-static JSValue PlayerEndScenario(OOJS_NATIVE_ARGS)
+static JSBool PlayerEndScenario(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -388,7 +410,7 @@ static JSValue PlayerEndScenario(OOJS_NATIVE_ARGS)
         scenario = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (scenario == nil) {
         OOJSReportBadArguments(context, @"Player", @"endScenario", argc, OOJS_ARGV, nil, @"scenario key");
-        return OOJSNativeFailure(context);
+        return NO;
     }
 
     OOJS_RETURN_BOOL([PLAYER endScenario:scenario]);
@@ -397,7 +419,7 @@ static JSValue PlayerEndScenario(OOJS_NATIVE_ARGS)
 }
 
 // increaseContractReputation()
-static JSValue PlayerIncreaseContractReputation(OOJS_NATIVE_ARGS)
+static JSBool PlayerIncreaseContractReputation(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -408,7 +430,7 @@ static JSValue PlayerIncreaseContractReputation(OOJS_NATIVE_ARGS)
 }
 
 // decreaseContractReputation()
-static JSValue PlayerDecreaseContractReputation(OOJS_NATIVE_ARGS)
+static JSBool PlayerDecreaseContractReputation(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -419,7 +441,7 @@ static JSValue PlayerDecreaseContractReputation(OOJS_NATIVE_ARGS)
 }
 
 // increaseParcelReputation()
-static JSValue PlayerIncreaseParcelReputation(OOJS_NATIVE_ARGS)
+static JSBool PlayerIncreaseParcelReputation(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -430,7 +452,7 @@ static JSValue PlayerIncreaseParcelReputation(OOJS_NATIVE_ARGS)
 }
 
 // decreaseParcelReputation()
-static JSValue PlayerDecreaseParcelReputation(OOJS_NATIVE_ARGS)
+static JSBool PlayerDecreaseParcelReputation(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -441,7 +463,7 @@ static JSValue PlayerDecreaseParcelReputation(OOJS_NATIVE_ARGS)
 }
 
 // increasePassengerReputation()
-static JSValue PlayerIncreasePassengerReputation(OOJS_NATIVE_ARGS)
+static JSBool PlayerIncreasePassengerReputation(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -452,7 +474,7 @@ static JSValue PlayerIncreasePassengerReputation(OOJS_NATIVE_ARGS)
 }
 
 // decreasePassengerReputation()
-static JSValue PlayerDecreasePassengerReputation(OOJS_NATIVE_ARGS)
+static JSBool PlayerDecreasePassengerReputation(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -463,7 +485,7 @@ static JSValue PlayerDecreasePassengerReputation(OOJS_NATIVE_ARGS)
 }
 
 // addMessageToArrivalReport(message : String)
-static JSValue PlayerAddMessageToArrivalReport(OOJS_NATIVE_ARGS)
+static JSBool PlayerAddMessageToArrivalReport(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -473,8 +495,8 @@ static JSValue PlayerAddMessageToArrivalReport(OOJS_NATIVE_ARGS)
     if (argc > 0)
         report = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (report == nil) {
-        OOJSReportBadArguments(context, @"Player", @"addMessageToArrivalReport", MIN(argc, 1), OOJS_ARGV, nil, @"string (arrival message)");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Player", @"addMessageToArrivalReport", MIN(argc, 1U), OOJS_ARGV, nil, @"string (arrival message)");
+        return NO;
     }
 
     [player addMessageToReport:report];
@@ -483,7 +505,7 @@ static JSValue PlayerAddMessageToArrivalReport(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue PlayerAudioMessage(OOJS_NATIVE_ARGS)
+static JSBool PlayerAudioMessage(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -494,7 +516,7 @@ static JSValue PlayerAudioMessage(OOJS_NATIVE_ARGS)
         audioMessage = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (audioMessage == nil) {
         OOJSReportBadArguments(context, @"Player", @"audioMessage", argc, OOJS_ARGV, nil, @"audiomessage (string)");
-        return OOJSNativeFailure(context);
+        return NO;
     }
 
     if ([player isSpeechOn] >= OOSPEECHSETTINGS_COMMS)
@@ -505,32 +527,30 @@ static JSValue PlayerAudioMessage(OOJS_NATIVE_ARGS)
 }
 
 // replaceShip (shipyard-key : String)
-static JSValue PlayerReplaceShip(OOJS_NATIVE_ARGS)
+static JSBool PlayerReplaceShip(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     NSString* shipKey = nil;
     PlayerEntity* player = OOPlayerForScripting();
     BOOL success = NO;
-    int32_t personality = 0;
+    int personality = 0;
 
     if (argc > 0)
         shipKey = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (shipKey == nil) {
-        OOJSReportBadArguments(context, @"Player", @"replaceShip", MIN(argc, 1), OOJS_ARGV, nil, @"string (shipyard key)");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Player", @"replaceShip", MIN(argc, 1U), OOJS_ARGV, nil, @"string (shipyard key)");
+        return NO;
     }
 
     if (EXPECT_NOT(!([player status] == STATUS_DOCKED))) {
         OOJSReportError(context, @"Player.replaceShip() only works while the player is docked.");
-        return OOJSNativeFailure(context);
+        return NO;
     }
 
     success = [player replaceShipWithNamedShip:shipKey];
     if (argc > 1) {
-        // As before, an invalid personality is ignored (personality stays 0); don't leave the conversion error pending.
-        if (!OOJSValueToInt32(context, OOJS_ARGV[1], &personality))
-            JS_FreeValue(context, JS_GetException(context));
+        JS_ValueToInt32(context, OOJS_ARGV[1], &personality);
         if (personality >= 0 && (uint16_t)personality < ENTITY_PERSONALITY_MAX) {
             [player setEntityPersonalityInt:(uint16_t)personality];
         }
@@ -548,13 +568,13 @@ static JSValue PlayerReplaceShip(OOJS_NATIVE_ARGS)
 }
 
 // setEscapePodDestination(Entity | 'NEARBY_SYSTEM')
-static JSValue PlayerSetEscapePodDestination(OOJS_NATIVE_ARGS)
+static JSBool PlayerSetEscapePodDestination(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     if (EXPECT_NOT(!OOIsPlayerStale())) {
         OOJSReportError(context, @"Player.setEscapePodDestination() only works while the escape pod is in flight.");
-        return OOJSNativeFailure(context);
+        return NO;
     }
 
     BOOL OK = NO;
@@ -608,8 +628,8 @@ static JSValue PlayerSetEscapePodDestination(OOJS_NATIVE_ARGS)
                 OK = YES;
             }
         } else {
-            int bValue = JS_ToBool(context, OOJS_ARGV[0]);
-            if (bValue == 0) {
+            JSBool bValue;
+            if (JS_ValueToBoolean(context, OOJS_ARGV[0], &bValue) && bValue == NO) {
                 [player setDockTarget:NULL];
                 OK = YES;
             }
@@ -618,44 +638,41 @@ static JSValue PlayerSetEscapePodDestination(OOJS_NATIVE_ARGS)
 
     if (OK == NO) {
         OOJSReportBadArguments(context, @"Player", @"setEscapePodDestination", argc, OOJS_ARGV, nil, @"a valid station, null, or 'NEARBY_SYSTEM'");
-        return OOJSNativeFailure(context);
     }
-    OOJS_RETURN_VOID;
+    return OK;
 
     OOJS_NATIVE_EXIT
 }
 
 // setPlayerRole (role-key : String [, index : Number])
-static JSValue PlayerSetPlayerRole(OOJS_NATIVE_ARGS)
+static JSBool PlayerSetPlayerRole(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     NSString* role = nil;
     PlayerEntity* player = OOPlayerForScripting();
-    uint32_t index = 0;
+    uint32 index = 0;
 
     if (argc > 0)
         role = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (role == nil) {
-        OOJSReportBadArguments(context, @"Player", @"setPlayerRole", MIN(argc, 1), OOJS_ARGV, nil, @"string (role) [, number (index)]");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Player", @"setPlayerRole", MIN(argc, 1U), OOJS_ARGV, nil, @"string (role) [, number (index)]");
+        return NO;
     }
 
     if (argc > 1) {
-        if (JS_ToUint32(context, &index, OOJS_ARGV[1]) == 0) {
+        if (JS_ValueToECMAUint32(context, OOJS_ARGV[1], &index)) {
             [player addRoleToPlayer:role inSlot:index];
-            OOJS_RETURN_VOID;
+            return YES;
         }
-        // As before, fall back to the default slot if the index can't be converted.
-        JS_FreeValue(context, JS_GetException(context));
     }
     [player addRoleToPlayer:role];
-    OOJS_RETURN_VOID;
+    return YES;
 
     OOJS_NATIVE_EXIT
 }
 
-static JSValue PlayerStopAudioMessage(OOJS_NATIVE_ARGS)
+static JSBool PlayerStopAudioMessage(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
     if ([UNIVERSE isSpeaking])

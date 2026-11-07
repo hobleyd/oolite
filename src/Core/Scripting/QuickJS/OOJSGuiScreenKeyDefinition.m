@@ -1,6 +1,6 @@
 /*
 
-OOJSGuiScreenKeyDefinition.m (QuickJS-ng)
+OOJSGuiScreenKeyDefinition.m
 
 
 Oolite
@@ -24,19 +24,18 @@ MA 02110-1301, USA.
 */
 
 #import "OOJSGuiScreenKeyDefinition.h"
-#import "OOJavaScriptEngine.h"
+// #import "OOJavaScriptEngine.h"
 
 @implementation OOJSGuiScreenKeyDefinition
 
 - (id)init
 {
     self = [super init];
-    _callback = JS_UNDEFINED;
-    _callbackThis = JS_UNDEFINED;
+    _callback = JSVAL_VOID;
+    _callbackThis = NULL;
 
     _owningScript = [[OOJSScript currentlyRunningScript] weakRetain];
 
-    // Stays registered until dealloc, so values set after a reset are also released on the next one.
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(deleteJSPointers)
                                                  name:kOOJavaScriptEngineWillResetNotification
@@ -47,23 +46,23 @@ MA 02110-1301, USA.
 
 - (void)deleteJSPointers
 {
+
     JSContext* context = OOJSAcquireContext();
-    JS_FreeValue(context, _callback);
-    _callback = JS_UNDEFINED;
-    JS_FreeValue(context, _callbackThis);
-    _callbackThis = JS_UNDEFINED;
+    _callback = JSVAL_VOID;
+    _callbackThis = NULL;
+    JS_RemoveValueRoot(context, &_callback);
+    JS_RemoveObjectRoot(context, &_callbackThis);
+
     OOJSRelinquishContext(context);
+
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:kOOJavaScriptEngineWillResetNotification
+                                                  object:[OOJavaScriptEngine sharedEngine]];
 }
 
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self
-                                                    name:kOOJavaScriptEngineWillResetNotification
-                                                  object:[OOJavaScriptEngine sharedEngine]];
-
     [_owningScript release];
-    [_name release];
-    [_registerKeys release];
 
     [self deleteJSPointers];
 
@@ -92,31 +91,31 @@ MA 02110-1301, USA.
     _registerKeys = [registerKeys copy];
 }
 
-- (JSValue)callback
+- (jsval)callback
 {
-    return JS_DupValue(OOJSAcquireContext(), _callback);
+    return _callback;
 }
 
-- (void)setCallback:(JSValueConst)callback
+- (void)setCallback:(jsval)callback
 {
     JSContext* context = OOJSAcquireContext();
-    JSValue old = _callback;
-    _callback = JS_DupValue(context, callback);
-    JS_FreeValue(context, old);
+    JS_RemoveValueRoot(context, &_callback);
+    _callback = callback;
+    OOJSAddGCValueRoot(context, &_callback, "OOJSGuiScreenKeyDefinition callback function");
     OOJSRelinquishContext(context);
 }
 
-- (JSValue)callbackThis
+- (JSObject*)callbackThis
 {
-    return JS_DupValue(OOJSAcquireContext(), _callbackThis);
+    return _callbackThis;
 }
 
-- (void)setCallbackThis:(JSValueConst)callbackThis
+- (void)setCallbackThis:(JSObject*)callbackThis
 {
     JSContext* context = OOJSAcquireContext();
-    JSValue old = _callbackThis;
-    _callbackThis = JS_DupValue(context, callbackThis);
-    JS_FreeValue(context, old);
+    JS_RemoveObjectRoot(context, &_callbackThis);
+    _callbackThis = callbackThis;
+    OOJSAddGCObjectRoot(context, &_callbackThis, "OOJSGuiScreenKeyDefinition callback this");
     OOJSRelinquishContext(context);
 }
 
@@ -124,35 +123,22 @@ MA 02110-1301, USA.
 {
     OOJavaScriptEngine* engine = [OOJavaScriptEngine sharedEngine];
     JSContext* context = OOJSAcquireContext();
-    JSValue rval = JS_UNDEFINED;
+    jsval rval = JSVAL_VOID;
 
-    if (!JS_IsFunction(context, _callback)) {
-        // The callback was released by an engine reset.
-        OOJSRelinquishContext(context);
-        return;
-    }
-
-    JSValue cKey = OOJSValueFromNativeObject(context, key);
+    jsval cKey = OOJSValueFromNativeObject(context, key);
 
     OOJSScript* owner = [_owningScript retain]; // local copy needed
     [OOJSScript pushScript:owner];
 
-    // Hold our own references in case the callback replaces them.
-    JSValue callback = JS_DupValue(context, _callback);
-    JSValue callbackThis = JS_IsObject(_callbackThis) ? JS_DupValue(context, _callbackThis) : JS_UNDEFINED;
-    [engine callJSFunction:callback
-                 forObject:callbackThis
+    [engine callJSFunction:_callback
+                 forObject:_callbackThis
                       argc:1
                       argv:&cKey
                     result:&rval];
-    JS_FreeValue(context, callback);
-    JS_FreeValue(context, callbackThis);
 
     [OOJSScript popScript:owner];
     [owner release];
 
-    JS_FreeValue(context, rval);
-    JS_FreeValue(context, cKey);
     OOJSRelinquishContext(context);
 }
 

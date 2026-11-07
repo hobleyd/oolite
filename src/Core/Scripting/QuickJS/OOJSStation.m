@@ -1,5 +1,5 @@
 /*
-OOJSStation.m (QuickJS-ng)
+OOJSStation.m
 
 Oolite
 Copyright (C) 2004-2013 Giles C Williams and contributors
@@ -22,14 +22,12 @@ MA 02110-1301, USA.
  */
 
 #import "OOJSStation.h"
-#import "EntityOOJavaScriptExtensions.h"
 #import "OOJSEntity.h"
 #import "OOJSInterfaceDefinition.h"
 #import "OOJSPlayer.h"
 #import "OOJSShip.h"
 #import "OOJavaScriptEngine.h"
 #import "PlayerEntityContracts.h"
-#import "StationEntity.h"
 
 #import "GameController.h"
 #import "OOCollectionExtractors.h"
@@ -37,37 +35,47 @@ MA 02110-1301, USA.
 #import "OOEquipmentType.h"
 #import "OOShipRegistry.h"
 
-static JSClassID sStationClassID;
+static JSObject* sStationPrototype;
 
-static BOOL JSStationGetStationEntity(JSContext* context, JSValueConst stationObj, StationEntity** outEntity);
+static BOOL JSStationGetStationEntity(JSContext* context, JSObject* stationObj, StationEntity** outEntity);
 
-static JSValue StationGetProperty(OOJS_GETTER_ARGS);
-static JSValue StationSetProperty(OOJS_SETTER_ARGS);
+static JSBool StationGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool StationSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
 
-static JSValue StationAbortAllDockings(OOJS_NATIVE_ARGS);
-static JSValue StationAbortDockingForShip(OOJS_NATIVE_ARGS);
-static JSValue StationCanDockShip(OOJS_NATIVE_ARGS);
-static JSValue StationDockPlayer(OOJS_NATIVE_ARGS);
-static JSValue StationIncreaseAlertLevel(OOJS_NATIVE_ARGS);
-static JSValue StationDecreaseAlertLevel(OOJS_NATIVE_ARGS);
-static JSValue StationLaunchShipWithRole(OOJS_NATIVE_ARGS);
-static JSValue StationLaunchDefenseShip(OOJS_NATIVE_ARGS);
-static JSValue StationLaunchEscort(OOJS_NATIVE_ARGS);
-static JSValue StationLaunchScavenger(OOJS_NATIVE_ARGS);
-static JSValue StationLaunchMiner(OOJS_NATIVE_ARGS);
-static JSValue StationLaunchPirateShip(OOJS_NATIVE_ARGS);
-static JSValue StationLaunchShuttle(OOJS_NATIVE_ARGS);
-static JSValue StationLaunchPatrol(OOJS_NATIVE_ARGS);
-static JSValue StationLaunchPolice(OOJS_NATIVE_ARGS);
-static JSValue StationSetInterface(OOJS_NATIVE_ARGS);
-static JSValue StationSetMarketPrice(OOJS_NATIVE_ARGS);
-static JSValue StationSetMarketQuantity(OOJS_NATIVE_ARGS);
-static JSValue StationAddShipToShipyard(OOJS_NATIVE_ARGS);
-static JSValue StationRemoveShipFromShipyard(OOJS_NATIVE_ARGS);
+static JSBool StationAbortAllDockings(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationAbortDockingForShip(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationCanDockShip(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationDockPlayer(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationIncreaseAlertLevel(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationDecreaseAlertLevel(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationLaunchShipWithRole(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationLaunchDefenseShip(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationLaunchEscort(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationLaunchScavenger(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationLaunchMiner(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationLaunchPirateShip(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationLaunchShuttle(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationLaunchPatrol(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationLaunchPolice(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationSetInterface(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationSetMarketPrice(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationSetMarketQuantity(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationAddShipToShipyard(JSContext* context, uintN argc, jsval* vp);
+static JSBool StationRemoveShipFromShipyard(JSContext* context, uintN argc, jsval* vp);
 
-static JSClassDef sStationClass = {
-    .class_name = "Station",
-    .finalizer = OOJSObjectWrapperFinalize,
+static JSClass sStationClass = {
+    "Station",
+    JSCLASS_HAS_PRIVATE,
+
+    JS_PropertyStub, // addProperty
+    JS_PropertyStub, // delProperty
+    StationGetProperty, // getProperty
+    StationSetProperty, // setProperty
+    JS_EnumerateStub, // enumerate
+    JS_ResolveStub, // resolve
+    JS_ConvertStub, // convert
+    OOJSObjectWrapperFinalize, // finalize
+    JSCLASS_NO_OPTIONAL_MEMBERS
 };
 
 enum {
@@ -92,76 +100,62 @@ enum {
     kStation_shipyard,
 };
 
-static const JSCFunctionListEntry sStationProperties[] = {
-    // JS name, getter, setter, ID
-    OOJS_PROPERTY_RW("alertCondition", StationGetProperty, StationSetProperty, kStation_alertCondition),
-    OOJS_PROPERTY_RW("allegiance", StationGetProperty, StationSetProperty, kStation_allegiance),
-    OOJS_PROPERTY_RW("allowsAutoDocking", StationGetProperty, StationSetProperty, kStation_allowsAutoDocking),
-    OOJS_PROPERTY_RW("allowsFastDocking", StationGetProperty, StationSetProperty, kStation_allowsFastDocking),
-    OOJS_PROPERTY_RW("breakPattern", StationGetProperty, StationSetProperty, kStation_breakPattern),
-    OOJS_PROPERTY_RO("dockedContractors", StationGetProperty, kStation_dockedContractors),
-    OOJS_PROPERTY_RO("dockedDefenders", StationGetProperty, kStation_dockedDefenders),
-    OOJS_PROPERTY_RO("dockedPolice", StationGetProperty, kStation_dockedPolice),
-    OOJS_PROPERTY_RO("equipmentPriceFactor", StationGetProperty, kStation_equipmentPriceFactor),
-    OOJS_PROPERTY_RO("equivalentTechLevel", StationGetProperty, kStation_equivalentTechLevel),
-    OOJS_PROPERTY_RW("hasNPCTraffic", StationGetProperty, StationSetProperty, kStation_hasNPCTraffic),
-    OOJS_PROPERTY_RO("hasShipyard", StationGetProperty, kStation_hasShipyard),
-    OOJS_PROPERTY_RO("isMainStation", StationGetProperty, kStation_isMainStation),
-    OOJS_PROPERTY_RO("market", StationGetProperty, kStation_market),
-    OOJS_PROPERTY_RW("requiresDockingClearance", StationGetProperty, StationSetProperty, kStation_requiresDockingClearance),
-    OOJS_PROPERTY_RW("roll", StationGetProperty, StationSetProperty, kStation_roll),
-    OOJS_PROPERTY_RW("suppressArrivalReports", StationGetProperty, StationSetProperty, kStation_suppressArrivalReports),
-    OOJS_PROPERTY_RO("shipyard", StationGetProperty, kStation_shipyard),
+static JSPropertySpec sStationProperties[] = {
+    // JS name						ID									flags
+    { "alertCondition", kStation_alertCondition, OOJS_PROP_READWRITE_CB },
+    { "allegiance", kStation_allegiance, OOJS_PROP_READWRITE_CB },
+    { "allowsAutoDocking", kStation_allowsAutoDocking, OOJS_PROP_READWRITE_CB },
+    { "allowsFastDocking", kStation_allowsFastDocking, OOJS_PROP_READWRITE_CB },
+    { "breakPattern", kStation_breakPattern, OOJS_PROP_READWRITE_CB },
+    { "dockedContractors", kStation_dockedContractors, OOJS_PROP_READONLY_CB },
+    { "dockedDefenders", kStation_dockedDefenders, OOJS_PROP_READONLY_CB },
+    { "dockedPolice", kStation_dockedPolice, OOJS_PROP_READONLY_CB },
+    { "equipmentPriceFactor", kStation_equipmentPriceFactor, OOJS_PROP_READONLY_CB },
+    { "equivalentTechLevel", kStation_equivalentTechLevel, OOJS_PROP_READONLY_CB },
+    { "hasNPCTraffic", kStation_hasNPCTraffic, OOJS_PROP_READWRITE_CB },
+    { "hasShipyard", kStation_hasShipyard, OOJS_PROP_READONLY_CB },
+    { "isMainStation", kStation_isMainStation, OOJS_PROP_READONLY_CB },
+    { "market", kStation_market, OOJS_PROP_READONLY_CB },
+    { "requiresDockingClearance", kStation_requiresDockingClearance, OOJS_PROP_READWRITE_CB },
+    { "roll", kStation_roll, OOJS_PROP_READWRITE_CB },
+    { "suppressArrivalReports", kStation_suppressArrivalReports, OOJS_PROP_READWRITE_CB },
+    { "shipyard", kStation_shipyard, OOJS_PROP_READONLY_CB },
+    { 0 }
 };
 
-static const JSCFunctionListEntry sStationMethods[] = {
-    // JS name, min args, function
-    JS_CFUNC_DEF("abortAllDockings", 0, StationAbortAllDockings),
-    JS_CFUNC_DEF("abortDockingForShip", 1, StationAbortDockingForShip),
-    JS_CFUNC_DEF("canDockShip", 1, StationCanDockShip),
-    JS_CFUNC_DEF("dockPlayer", 0, StationDockPlayer),
-    JS_CFUNC_DEF("increaseAlertLevel", 0, StationIncreaseAlertLevel),
-    JS_CFUNC_DEF("decreaseAlertLevel", 0, StationDecreaseAlertLevel),
-    JS_CFUNC_DEF("launchDefenseShip", 0, StationLaunchDefenseShip),
-    JS_CFUNC_DEF("launchEscort", 0, StationLaunchEscort),
-    JS_CFUNC_DEF("launchMiner", 0, StationLaunchMiner),
-    JS_CFUNC_DEF("launchPatrol", 0, StationLaunchPatrol),
-    JS_CFUNC_DEF("launchPirateShip", 0, StationLaunchPirateShip),
-    JS_CFUNC_DEF("launchPolice", 0, StationLaunchPolice),
-    JS_CFUNC_DEF("launchScavenger", 0, StationLaunchScavenger),
-    JS_CFUNC_DEF("launchShipWithRole", 1, StationLaunchShipWithRole),
-    JS_CFUNC_DEF("launchShuttle", 0, StationLaunchShuttle),
-    JS_CFUNC_DEF("setInterface", 0, StationSetInterface),
-    JS_CFUNC_DEF("setMarketPrice", 2, StationSetMarketPrice),
-    JS_CFUNC_DEF("setMarketQuantity", 2, StationSetMarketQuantity),
-    JS_CFUNC_DEF("addShipToShipyard", 1, StationAddShipToShipyard),
-    JS_CFUNC_DEF("removeShipFromShipyard", 1, StationRemoveShipFromShipyard),
+static JSFunctionSpec sStationMethods[] = {
+    // JS name					Function						min args
+    { "abortAllDockings", StationAbortAllDockings, 0 },
+    { "abortDockingForShip", StationAbortDockingForShip, 1 },
+    { "canDockShip", StationCanDockShip, 1 },
+    { "dockPlayer", StationDockPlayer, 0 },
+    { "increaseAlertLevel", StationIncreaseAlertLevel, 0 },
+    { "decreaseAlertLevel", StationDecreaseAlertLevel, 0 },
+    { "launchDefenseShip", StationLaunchDefenseShip, 0 },
+    { "launchEscort", StationLaunchEscort, 0 },
+    { "launchMiner", StationLaunchMiner, 0 },
+    { "launchPatrol", StationLaunchPatrol, 0 },
+    { "launchPirateShip", StationLaunchPirateShip, 0 },
+    { "launchPolice", StationLaunchPolice, 0 },
+    { "launchScavenger", StationLaunchScavenger, 0 },
+    { "launchShipWithRole", StationLaunchShipWithRole, 1 },
+    { "launchShuttle", StationLaunchShuttle, 0 },
+    { "setInterface", StationSetInterface, 0 },
+    { "setMarketPrice", StationSetMarketPrice, 2 },
+    { "setMarketQuantity", StationSetMarketQuantity, 2 },
+    { "addShipToShipyard", StationAddShipToShipyard, 1 },
+    { "removeShipFromShipyard", StationRemoveShipFromShipyard, 1 },
+    { 0 }
 };
 
-void InitOOJSStation(JSContext* context, JSValueConst global)
+void InitOOJSStation(JSContext* context, JSObject* global)
 {
-    OOJSRegisterClass(&sStationClassID, &sStationClass);
-
-    JSValue parentPrototype = JS_GetClassProto(context, JSShipClassID());
-    NSCAssert(JS_IsObject(parentPrototype), @"Ship must be initialized before Station.");
-    OOJSInitClass(context, global, sStationClassID, parentPrototype, OOJSUnconstructableConstruct, 0,
-        sStationProperties, OOJS_COUNT(sStationProperties), sStationMethods, OOJS_COUNT(sStationMethods), NULL, 0);
-    JS_FreeValue(context, parentPrototype);
-
-    OOJSRegisterObjectConverter(sStationClassID, OOJSBasicPrivateObjectConverter);
-    OOJSRegisterSubclass(sStationClassID, JSShipClassID());
+    sStationPrototype = JS_InitClass(context, global, JSShipPrototype(), &sStationClass, OOJSUnconstructableConstruct, 0, sStationProperties, sStationMethods, NULL, NULL);
+    OOJSRegisterObjectConverter(&sStationClass, OOJSBasicPrivateObjectConverter);
+    OOJSRegisterSubclass(&sStationClass, JSShipClass());
 }
 
-JSClassID JSStationClassID(void)
-{
-    return sStationClassID;
-}
-
-/*	As in the SpiderMonkey version, these return NO without an exception for
-        stale references (nil entity) and for entities of the wrong native class;
-        OOJSEntityGetEntity() throws if the object is not an Entity at all.
-*/
-static BOOL JSStationGetStationEntity(JSContext* context, JSValueConst stationObj, StationEntity** outEntity)
+static BOOL JSStationGetStationEntity(JSContext* context, JSObject* stationObj, StationEntity** outEntity)
 {
     OOJS_PROFILE_ENTER
 
@@ -185,7 +179,7 @@ static BOOL JSStationGetStationEntity(JSContext* context, JSValueConst stationOb
     OOJS_PROFILE_EXIT
 }
 
-static BOOL JSStationGetShipEntity(JSContext* context, JSValueConst shipObj, ShipEntity** outEntity)
+static BOOL JSStationGetShipEntity(JSContext* context, JSObject* shipObj, ShipEntity** outEntity)
 {
     OOJS_PROFILE_ENTER
 
@@ -209,25 +203,12 @@ static BOOL JSStationGetShipEntity(JSContext* context, JSValueConst shipObj, Shi
     OOJS_PROFILE_EXIT
 }
 
-/*	The SpiderMonkey methods treated a failed lookup of this as a no-op (a
-        stale reference). If the lookup failed because this is not an Entity, an
-        error is pending, and QuickJS natives must not return normally with an
-        exception pending.
-*/
-#define GET_THIS_STATION(THISENT)                                       \
-    do {                                                                \
-        if (!JSStationGetStationEntity(context, OOJS_THIS, &THISENT)) { \
-            if (JS_HasException(context))                               \
-                return JS_EXCEPTION;                                    \
-            OOJS_RETURN_VOID; /* stale reference, no-op */              \
-        }                                                               \
-    } while (0)
-
 @implementation StationEntity (OOJavaScriptExtensions)
 
-- (JSClassID)oo_jsClassID
+- (void)getJSClass:(JSClass**)outClass andPrototype:(JSObject**)outPrototype
 {
-    return sStationClassID;
+    *outClass = &sStationClass;
+    *outPrototype = sStationPrototype;
 }
 
 - (NSString*)oo_jsClassName
@@ -237,142 +218,165 @@ static BOOL JSStationGetShipEntity(JSContext* context, JSValueConst shipObj, Shi
 
 @end
 
-static JSValue StationGetProperty(OOJS_GETTER_ARGS)
+static JSBool StationGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* entity = nil;
 
     if (!JSStationGetStationEntity(context, this, &entity))
-        return OOJSNativeFailure(context);
+        return NO;
     if (entity == nil) {
-        return JS_UNDEFINED;
+        *value = JSVAL_VOID;
+        return YES;
     }
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kStation_isMainStation:
-        return OOJSValueFromBOOL(entity == [UNIVERSE station]);
+        *value = OOJSValueFromBOOL(entity == [UNIVERSE station]);
+        return YES;
 
     case kStation_hasNPCTraffic:
-        return OOJSValueFromBOOL([entity hasNPCTraffic]);
+        *value = OOJSValueFromBOOL([entity hasNPCTraffic]);
+        return YES;
 
     case kStation_hasShipyard:
-        return OOJSValueFromBOOL([entity hasShipyard]);
+        *value = OOJSValueFromBOOL([entity hasShipyard]);
+        return YES;
 
     case kStation_alertCondition:
-        return JS_NewInt32(context, [entity alertLevel]);
+        *value = INT_TO_JSVAL([entity alertLevel]);
+        return YES;
 
     case kStation_allegiance: {
         NSString* result = [entity allegiance];
-        return OOJSValueFromNativeObject(context, result);
+        *value = OOJSValueFromNativeObject(context, result);
+        return YES;
     }
 
     case kStation_requiresDockingClearance:
-        return OOJSValueFromBOOL([entity requiresDockingClearance]);
+        *value = OOJSValueFromBOOL([entity requiresDockingClearance]);
+        return YES;
 
     case kStation_roll:
         // same as in ship definition, but this time read/write below
-        return JS_NewNumber(context, [entity flightRoll]);
+        return JS_NewNumberValue(context, [entity flightRoll], value);
 
     case kStation_allowsFastDocking:
-        return OOJSValueFromBOOL([entity allowsFastDocking]);
+        *value = OOJSValueFromBOOL([entity allowsFastDocking]);
+        return YES;
 
     case kStation_allowsAutoDocking:
-        return OOJSValueFromBOOL([entity allowsAutoDocking]);
+        *value = OOJSValueFromBOOL([entity allowsAutoDocking]);
+        return YES;
 
     case kStation_dockedContractors:
-        return JS_NewInt32(context, [entity countOfDockedContractors]);
+        *value = INT_TO_JSVAL([entity countOfDockedContractors]);
+        return YES;
 
     case kStation_dockedPolice:
-        return JS_NewInt32(context, [entity countOfDockedPolice]);
+        *value = INT_TO_JSVAL([entity countOfDockedPolice]);
+        return YES;
 
     case kStation_dockedDefenders:
-        return JS_NewInt32(context, [entity countOfDockedDefenders]);
+        *value = INT_TO_JSVAL([entity countOfDockedDefenders]);
+        return YES;
 
     case kStation_equivalentTechLevel:
-        return JS_NewInt32(context, (int32_t)[entity equivalentTechLevel]);
+        *value = INT_TO_JSVAL((int32_t)[entity equivalentTechLevel]);
+        return YES;
 
     case kStation_equipmentPriceFactor:
-        return JS_NewNumber(context, [entity equipmentPriceFactor]);
+        return JS_NewNumberValue(context, [entity equipmentPriceFactor], value);
 
     case kStation_suppressArrivalReports:
-        return OOJSValueFromBOOL([entity suppressArrivalReports]);
+        *value = OOJSValueFromBOOL([entity suppressArrivalReports]);
+        return YES;
 
     case kStation_breakPattern:
-        return OOJSValueFromBOOL([entity hasBreakPattern]);
+        *value = OOJSValueFromBOOL([entity hasBreakPattern]);
+        return YES;
 
     case kStation_shipyard: {
         if (![entity hasShipyard]) {
             // return null if station has no shipyard
-            return OOJSValueFromNativeObject(context, nil);
+            *value = OOJSValueFromNativeObject(context, nil);
         } else {
             if ([entity localShipyard] == nil)
                 [entity generateShipyard];
             NSMutableArray* shipyard = [entity localShipyard];
-            return OOJSValueFromNativeObject(context, shipyard);
+            *value = OOJSValueFromNativeObject(context, shipyard);
         }
+        return YES;
     }
 
     case kStation_market: {
         NSDictionary* market = [entity localMarketForScripting];
-        return OOJSValueFromNativeObject(context, market);
+        *value = OOJSValueFromNativeObject(context, market);
+        return YES;
     }
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sStationProperties, OOJS_COUNT(sStationProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sStationProperties);
+        return NO;
     }
 
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationSetProperty(OOJS_SETTER_ARGS)
+static JSBool StationSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* entity = nil;
-    int bValue;
-    int32_t iValue;
-    double fValue;
+    JSBool bValue;
+    int32 iValue;
+    jsdouble fValue;
     NSString* sValue = nil;
 
     if (!JSStationGetStationEntity(context, this, &entity))
-        return OOJSNativeFailure(context);
+        return NO;
     if (entity == nil)
-        return JS_UNDEFINED;
+        return YES;
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kStation_hasNPCTraffic:
-        if ((bValue = JS_ToBool(context, value)) >= 0) {
+        if (JS_ValueToBoolean(context, *value, &bValue)) {
             [entity setHasNPCTraffic:bValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kStation_alertCondition:
-        if (OOJSValueToInt32(context, value, &iValue)) {
+        if (JS_ValueToInt32(context, *value, &iValue)) {
             [entity setAlertLevel:iValue signallingScript:NO]; // Performs range checking
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kStation_allegiance:
-        sValue = OOStringFromJSValue(context, value);
+        sValue = OOStringFromJSValue(context, *value);
         if (sValue != nil) {
             [entity setAllegiance:sValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kStation_requiresDockingClearance:
-        if ((bValue = JS_ToBool(context, value)) >= 0) {
+        if (JS_ValueToBoolean(context, *value, &bValue)) {
             [entity setRequiresDockingClearance:bValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kStation_roll:
-        if (JS_ToFloat64(context, &fValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &fValue)) {
             /*				if (fValue < -2.0)  fValue = -2.0;
                                             if (fValue > 2.0)  fValue = 2.0;	// clamping to -2.0...2.0 gives us ±M_PI actual maximum rotation
                                             [entity setRoll:fValue]; */
@@ -382,60 +386,57 @@ static JSValue StationSetProperty(OOJS_SETTER_ARGS)
             else if (fValue > M_PI)
                 fValue = M_PI;
             [entity setRawRoll:fValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kStation_allowsFastDocking:
-        if ((bValue = JS_ToBool(context, value)) >= 0) {
+        if (JS_ValueToBoolean(context, *value, &bValue)) {
             [entity setAllowsFastDocking:bValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kStation_allowsAutoDocking:
-        if ((bValue = JS_ToBool(context, value)) >= 0) {
+        if (JS_ValueToBoolean(context, *value, &bValue)) {
             [entity setAllowsAutoDocking:bValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kStation_suppressArrivalReports:
-        if ((bValue = JS_ToBool(context, value)) >= 0) {
+        if (JS_ValueToBoolean(context, *value, &bValue)) {
             [entity setSuppressArrivalReports:bValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kStation_breakPattern:
-        if ((bValue = JS_ToBool(context, value)) >= 0) {
+        if (JS_ValueToBoolean(context, *value, &bValue)) {
             [entity setHasBreakPattern:bValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sStationProperties, OOJS_COUNT(sStationProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sStationProperties);
+        return NO;
     }
 
-    OOJSReportBadPropertyValue(context, this, magic, sStationProperties, OOJS_COUNT(sStationProperties), value);
-    return OOJSNativeFailure(context);
+    OOJSReportBadPropertyValue(context, this, propID, sStationProperties, *value);
+    return NO;
 
     OOJS_NATIVE_EXIT
 }
 
 // *** Methods ***
 
-static JSValue StationAbortAllDockings(OOJS_NATIVE_ARGS)
+static JSBool StationAbortAllDockings(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
     JSStationGetStationEntity(context, OOJS_THIS, &station);
-    // SpiderMonkey tolerated returning normally with an error pending; QuickJS does not.
-    if (JS_HasException(context))
-        return JS_EXCEPTION;
     [station abortAllDockings];
 
     OOJS_RETURN_VOID;
@@ -443,25 +444,20 @@ static JSValue StationAbortAllDockings(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationAbortDockingForShip(OOJS_NATIVE_ARGS)
+static JSBool StationAbortDockingForShip(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
     JSStationGetStationEntity(context, OOJS_THIS, &station);
-    if (JS_HasException(context))
-        return JS_EXCEPTION;
     if (argc == 0) {
-        OOJSReportBadArguments(context, @"Station", @"abortDockingForShip", MIN(argc, 1), OOJS_ARGV, nil, @"ship in docking queue");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"abortDockingForShip", MIN(argc, 1U), OOJS_ARGV, nil, @"ship in docking queue");
+        return NO;
     }
-    // (null was an object to SpiderMonkey, but passing it was not meaningful; it now fails like other non-objects.)
-    if (JS_IsNull(OOJS_ARGV[0]) || !JS_IsObject(OOJS_ARGV[0]))
-        return OOJSNativeFailure(context);
+    if (!JSVAL_IS_OBJECT(OOJS_ARGV[0]))
+        return NO;
     ShipEntity* ship = nil;
-    JSStationGetShipEntity(context, OOJS_ARGV[0], &ship);
-    if (JS_HasException(context))
-        return JS_EXCEPTION;
+    JSStationGetShipEntity(context, JSVAL_TO_OBJECT(OOJS_ARGV[0]), &ship);
     if (ship != nil) {
         [station abortDockingForShip:ship];
     }
@@ -473,7 +469,7 @@ static JSValue StationAbortDockingForShip(OOJS_NATIVE_ARGS)
 
 // canDockShip(shipEntity) : boolean
 // Proposed by phkb (Nick Rogers) 20161206
-static JSValue StationCanDockShip(OOJS_NATIVE_ARGS)
+static JSBool StationCanDockShip(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -481,17 +477,18 @@ static JSValue StationCanDockShip(OOJS_NATIVE_ARGS)
     ShipEntity* shipToCheck = nil;
 
     if (argc > 0) {
-        if (JS_IsNull(OOJS_ARGV[0]) || !JS_IsObject(OOJS_ARGV[0]) || !JSStationGetShipEntity(context, OOJS_ARGV[0], &shipToCheck)) {
-            return OOJSNativeFailure(context);
+        if (!JSVAL_IS_OBJECT(OOJS_ARGV[0]) || !JSStationGetShipEntity(context, JSVAL_TO_OBJECT(OOJS_ARGV[0]), &shipToCheck)) {
+            return NO;
         }
     }
     if (EXPECT_NOT(shipToCheck == nil)) {
-        OOJSReportBadArguments(context, @"Station", @"canDockShip", MIN(argc, 1), OOJS_ARGV, nil, @"shipEntity");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"canDockShip", MIN(argc, 1U), OOJS_ARGV, nil, @"shipEntity");
+        return NO;
     }
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     OOJS_BEGIN_FULL_NATIVE(context)
     result = [station fitsInDock:shipToCheck andLogNoFit:NO];
@@ -503,7 +500,7 @@ static JSValue StationCanDockShip(OOJS_NATIVE_ARGS)
 
 // dockPlayer()
 // Proposed and written by Frame 20090729
-static JSValue StationDockPlayer(OOJS_NATIVE_ARGS)
+static JSBool StationDockPlayer(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -521,9 +518,6 @@ static JSValue StationDockPlayer(OOJS_NATIVE_ARGS)
     if (EXPECT(![player isDocked])) {
         StationEntity* stationForDockingPlayer = nil;
         JSStationGetStationEntity(context, OOJS_THIS, &stationForDockingPlayer);
-        // SpiderMonkey tolerated returning normally with an error pending; QuickJS does not.
-        if (JS_HasException(context))
-            return JS_EXCEPTION;
         [player setDockingClearanceStatus:DOCKING_CLEARANCE_STATUS_GRANTED];
         [player safeAllMissiles];
         [UNIVERSE setViewDirection:VIEW_FORWARD];
@@ -534,12 +528,13 @@ static JSValue StationDockPlayer(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationIncreaseAlertLevel(OOJS_NATIVE_ARGS)
+static JSBool StationIncreaseAlertLevel(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
     StationEntity* station = nil;
 
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     OOJS_BEGIN_FULL_NATIVE(context)
     if ([station alertCondition] < 3) {
@@ -550,12 +545,13 @@ static JSValue StationIncreaseAlertLevel(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationDecreaseAlertLevel(OOJS_NATIVE_ARGS)
+static JSBool StationDecreaseAlertLevel(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
     StationEntity* station = nil;
 
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     OOJS_BEGIN_FULL_NATIVE(context)
     if ([station alertCondition] > 1) {
@@ -567,26 +563,27 @@ static JSValue StationDecreaseAlertLevel(OOJS_NATIVE_ARGS)
 }
 
 // launchShipWithRole(role : String [, abortAllDockings : boolean]) : shipEntity
-static JSValue StationLaunchShipWithRole(OOJS_NATIVE_ARGS)
+static JSBool StationLaunchShipWithRole(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     NSString* shipRole = nil;
     StationEntity* station = nil;
     ShipEntity* result = nil;
-    BOOL abortAllDockings = NO;
+    JSBool abortAllDockings = NO;
 
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     if (argc > 0)
         shipRole = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (EXPECT_NOT(shipRole == nil)) {
-        OOJSReportBadArguments(context, @"Station", @"launchShipWithRole", MIN(argc, 1), OOJS_ARGV, nil, @"string (role)");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"launchShipWithRole", MIN(argc, 1U), OOJS_ARGV, nil, @"string (role)");
+        return NO;
     }
 
     if (argc > 1)
-        abortAllDockings = JS_ToBool(context, OOJS_ARGV[1]) > 0;
+        JS_ValueToBoolean(context, OOJS_ARGV[1], &abortAllDockings);
 
     OOJS_BEGIN_FULL_NATIVE(context)
     result = [station launchIndependentShip:shipRole];
@@ -598,12 +595,13 @@ static JSValue StationLaunchShipWithRole(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationLaunchDefenseShip(OOJS_NATIVE_ARGS)
+static JSBool StationLaunchDefenseShip(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     ShipEntity* launched = nil;
     OOJS_BEGIN_FULL_NATIVE(context)
@@ -614,12 +612,13 @@ static JSValue StationLaunchDefenseShip(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationLaunchEscort(OOJS_NATIVE_ARGS)
+static JSBool StationLaunchEscort(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     ShipEntity* launched = nil;
     OOJS_BEGIN_FULL_NATIVE(context)
@@ -630,12 +629,13 @@ static JSValue StationLaunchEscort(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationLaunchScavenger(OOJS_NATIVE_ARGS)
+static JSBool StationLaunchScavenger(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     ShipEntity* launched = nil;
     OOJS_BEGIN_FULL_NATIVE(context)
@@ -646,12 +646,13 @@ static JSValue StationLaunchScavenger(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationLaunchMiner(OOJS_NATIVE_ARGS)
+static JSBool StationLaunchMiner(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     ShipEntity* launched = nil;
     OOJS_BEGIN_FULL_NATIVE(context)
@@ -661,12 +662,13 @@ static JSValue StationLaunchMiner(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationLaunchPirateShip(OOJS_NATIVE_ARGS)
+static JSBool StationLaunchPirateShip(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     ShipEntity* launched = nil;
     OOJS_BEGIN_FULL_NATIVE(context)
@@ -677,12 +679,13 @@ static JSValue StationLaunchPirateShip(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationLaunchShuttle(OOJS_NATIVE_ARGS)
+static JSBool StationLaunchShuttle(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     ShipEntity* launched = nil;
     OOJS_BEGIN_FULL_NATIVE(context)
@@ -692,12 +695,13 @@ static JSValue StationLaunchShuttle(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationLaunchPatrol(OOJS_NATIVE_ARGS)
+static JSBool StationLaunchPatrol(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     ShipEntity* launched = nil;
     OOJS_BEGIN_FULL_NATIVE(context)
@@ -707,12 +711,13 @@ static JSValue StationLaunchPatrol(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationLaunchPolice(OOJS_NATIVE_ARGS)
+static JSBool StationLaunchPolice(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     NSArray* launched = nil;
     OOJS_BEGIN_FULL_NATIVE(context)
@@ -722,74 +727,52 @@ static JSValue StationLaunchPolice(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-// Get a property of a definition object. As before, a failed get is treated like a missing property.
-static JSValue GetParam(JSContext* context, JSValueConst object, const char* key)
-{
-    JSValue value = JS_GetPropertyStr(context, object, key);
-    if (JS_IsException(value)) {
-        OOJSReportPendingException(context);
-        return JS_UNDEFINED;
-    }
-    return value;
-}
-
-static JSValue StationSetInterface(OOJS_NATIVE_ARGS)
+static JSBool StationSetInterface(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     if (argc < 1) {
-        OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1), OOJS_ARGV, NULL, @"key [, definition]");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1U), OOJS_ARGV, NULL, @"key [, definition]");
+        return NO;
     }
     NSString* key = OOStringFromJSValue(context, OOJS_ARGV[0]);
 
-    if (argc < 2 || JS_IsNull(OOJS_ARGV[1])) {
+    if (argc < 2 || JSVAL_IS_NULL(OOJS_ARGV[1])) {
         [station setInterfaceDefinition:nil forKey:key];
         OOJS_RETURN_VOID;
     }
 
-    JSValue value = JS_UNDEFINED;
-    JSValue callback = JS_UNDEFINED;
-    JSValue params = JS_UNDEFINED;
-    NSString* errorDescription = nil;
+    jsval value = JSVAL_NULL;
+    jsval callback = JSVAL_NULL;
+    JSObject* callbackThis = NULL;
+    JSObject* params = NULL;
 
     NSString* title = nil;
     NSString* summary = nil;
     NSString* category = nil;
 
-    // SpiderMonkey's JS_ValueToObject() boxed primitives. (It gave no object for undefined, which then could not work; treat it as invalid.)
-    if (!JS_IsUndefined(OOJS_ARGV[1])) {
-        params = JS_ToObject(context, OOJS_ARGV[1]);
-        if (JS_IsException(params)) {
-            JS_FreeValue(context, JS_GetException(context));
-            params = JS_UNDEFINED;
-        }
-    }
-    if (!JS_IsObject(params)) {
-        errorDescription = @"key [, definition]";
-        goto fail;
+    if (!JS_ValueToObject(context, OOJS_ARGV[1], &params)) {
+        OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1U), OOJS_ARGV, NULL, @"key [, definition]");
+        return NO;
     }
 
     // get and validate title
-    value = GetParam(context, params, "title");
-    if (JS_IsUndefined(value)) {
-        errorDescription = @"key [, definition]; if definition is set, it must have a 'title' property.";
-        goto fail;
+    if (JS_GetProperty(context, params, "title", &value) == JS_FALSE || JSVAL_IS_VOID(value)) {
+        OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1U), OOJS_ARGV, NULL, @"key [, definition]; if definition is set, it must have a 'title' property.");
+        return NO;
     }
     title = OOStringFromJSValue(context, value);
-    JS_FreeValue(context, value);
-    value = JS_UNDEFINED;
     if (title == nil || [title length] == 0) {
-        errorDescription = @"key [, definition]; if definition is set, 'title' property must be a non-empty string.";
-        goto fail;
+        OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1U), OOJS_ARGV, NULL, @"key [, definition]; if definition is set, 'title' property must be a non-empty string.");
+        return NO;
     }
 
     // get category with default
-    value = GetParam(context, params, "category");
-    if (JS_IsUndefined(value)) {
+    if (JS_GetProperty(context, params, "category", &value) == JS_FALSE || JSVAL_IS_VOID(value)) {
         category = [NSString stringWithString:DESC(@"interfaces-category-uncategorised")];
     } else {
         category = OOStringFromJSValue(context, value);
@@ -797,58 +780,40 @@ static JSValue StationSetInterface(OOJS_NATIVE_ARGS)
             category = [NSString stringWithString:DESC(@"interfaces-category-uncategorised")];
         }
     }
-    JS_FreeValue(context, value);
-    value = JS_UNDEFINED;
 
     // get and validate summary
-    value = GetParam(context, params, "summary");
-    if (JS_IsUndefined(value)) {
-        errorDescription = @"key [, definition]; if definition is set, it must have a 'summary' property.";
-        goto fail;
+    if (JS_GetProperty(context, params, "summary", &value) == JS_FALSE || JSVAL_IS_VOID(value)) {
+        OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1U), OOJS_ARGV, NULL, @"key [, definition]; if definition is set, it must have a 'summary' property.");
+        return NO;
     }
     summary = OOStringFromJSValue(context, value);
-    JS_FreeValue(context, value);
-    value = JS_UNDEFINED;
     if (summary == nil || [summary length] == 0) {
-        errorDescription = @"key [, definition]; if definition is set, 'summary' property must be a non-empty string.";
-        goto fail;
+        OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1U), OOJS_ARGV, NULL, @"key [, definition]; if definition is set, 'summary' property must be a non-empty string.");
+        return NO;
     }
 
     // get and validate callback
-    callback = GetParam(context, params, "callback");
-    if (JS_IsUndefined(callback)) {
-        errorDescription = @"key [, definition]; if definition is set, it must have a 'callback' property.";
-        goto fail;
+    if (JS_GetProperty(context, params, "callback", &callback) == JS_FALSE || JSVAL_IS_VOID(callback)) {
+        OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1U), OOJS_ARGV, NULL, @"key [, definition]; if definition is set, it must have a 'callback' property.");
+        return NO;
     }
     if (!OOJSValueIsFunction(context, callback)) {
-        errorDescription = @"key [, definition]; 'callback' property must be a function.";
-        goto fail;
+        OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1U), OOJS_ARGV, NULL, @"key [, definition]; 'callback' property must be a function.");
+        return NO;
     }
 
     OOJSInterfaceDefinition* definition = [[OOJSInterfaceDefinition alloc] init];
     [definition setTitle:title];
     [definition setCategory:category];
     [definition setSummary:summary];
-    [definition setCallback:callback]; // Takes its own reference.
-    JS_FreeValue(context, callback);
+    [definition setCallback:callback];
 
     // get callback 'this'
-    value = GetParam(context, params, "cbThis");
-    if (!JS_IsUndefined(value)) {
-        // As with SpiderMonkey's JS_ValueToObject(), null gives no object; primitives are boxed.
-        if (!JS_IsNull(value)) {
-            JSValue callbackThis = JS_ToObject(context, value);
-            if (JS_IsException(callbackThis)) {
-                JS_FreeValue(context, JS_GetException(context));
-            } else {
-                [definition setCallbackThis:callbackThis]; // Takes its own reference.
-            }
-            JS_FreeValue(context, callbackThis);
-        }
+    if (JS_GetProperty(context, params, "cbThis", &value) == JS_TRUE && !JSVAL_IS_VOID(value)) {
+        JS_ValueToObject(context, value, &callbackThis);
+        [definition setCallbackThis:callbackThis];
         // can do .bind(this) for callback instead
     }
-    JS_FreeValue(context, value);
-    JS_FreeValue(context, params);
 
     [station setInterfaceDefinition:definition forKey:key];
 
@@ -856,39 +821,33 @@ static JSValue StationSetInterface(OOJS_NATIVE_ARGS)
 
     OOJS_RETURN_VOID;
 
-fail:
-    JS_FreeValue(context, callback);
-    JS_FreeValue(context, value);
-    JS_FreeValue(context, params);
-    OOJSReportBadArguments(context, @"Station", @"setInterface", MIN(argc, 1), OOJS_ARGV, NULL, errorDescription);
-    return OOJSNativeFailure(context);
-
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationSetMarketPrice(OOJS_NATIVE_ARGS)
+static JSBool StationSetMarketPrice(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     if (argc < 2) {
-        OOJSReportBadArguments(context, @"Station", @"setMarketPrice", MIN(argc, 2), OOJS_ARGV, NULL, @"commodity, credits");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"setMarketPrice", MIN(argc, 2U), OOJS_ARGV, NULL, @"commodity, credits");
+        return NO;
     }
 
     OOCommodityType commodity = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (EXPECT_NOT(![[UNIVERSE commodities] goodDefined:commodity])) {
-        OOJSReportBadArguments(context, @"Station", @"setMarketPrice", MIN(argc, 2), OOJS_ARGV, NULL, @"Unrecognised commodity type");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"setMarketPrice", MIN(argc, 2U), OOJS_ARGV, NULL, @"Unrecognised commodity type");
+        return NO;
     }
 
-    int32_t price;
-    BOOL gotPrice = OOJSValueToInt32(context, OOJS_ARGV[1], &price);
+    int32 price;
+    BOOL gotPrice = JS_ValueToInt32(context, OOJS_ARGV[1], &price);
     if (EXPECT_NOT(!gotPrice || price < 0)) {
-        OOJSReportBadArguments(context, @"Station", @"setMarketPrice", MIN(argc, 2), OOJS_ARGV, NULL, @"Price must be at least 0 decicredits");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"setMarketPrice", MIN(argc, 2U), OOJS_ARGV, NULL, @"Price must be at least 0 decicredits");
+        return NO;
     }
 
     [station setPrice:(NSUInteger)price forCommodity:commodity];
@@ -902,29 +861,30 @@ static JSValue StationSetMarketPrice(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationSetMarketQuantity(OOJS_NATIVE_ARGS)
+static JSBool StationSetMarketQuantity(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     if (argc < 2) {
-        OOJSReportBadArguments(context, @"Station", @"setMarketQuantity", MIN(argc, 2), OOJS_ARGV, NULL, @"commodity, units");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"setMarketQuantity", MIN(argc, 2U), OOJS_ARGV, NULL, @"commodity, units");
+        return NO;
     }
 
     OOCommodityType commodity = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (EXPECT_NOT(![[UNIVERSE commodities] goodDefined:commodity])) {
-        OOJSReportBadArguments(context, @"Station", @"setMarketQuantity", MIN(argc, 2), OOJS_ARGV, NULL, @"Unrecognised commodity type");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"setMarketQuantity", MIN(argc, 2U), OOJS_ARGV, NULL, @"Unrecognised commodity type");
+        return NO;
     }
 
-    int32_t quantity;
-    BOOL gotQuantity = OOJSValueToInt32(context, OOJS_ARGV[1], &quantity);
+    int32 quantity;
+    BOOL gotQuantity = JS_ValueToInt32(context, OOJS_ARGV[1], &quantity);
     if (EXPECT_NOT(!gotQuantity || quantity < 0 || (OOCargoQuantity)quantity > [[station localMarket] capacityForGood:commodity])) {
-        OOJSReportBadArguments(context, @"Station", @"setMarketQuantity", MIN(argc, 2), OOJS_ARGV, NULL, @"Quantity must be between 0 and the station market capacity");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"setMarketQuantity", MIN(argc, 2U), OOJS_ARGV, NULL, @"Quantity must be between 0 and the station market capacity");
+        return NO;
     }
 
     [station setQuantity:(OOCargoQuantity)quantity forCommodity:commodity];
@@ -938,51 +898,48 @@ static JSValue StationSetMarketQuantity(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationAddShipToShipyard(OOJS_NATIVE_ARGS)
+static JSBool StationAddShipToShipyard(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
+    JSObject* params = NULL;
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
-    /*	SpiderMonkey's JS_ValueToObject() accepted primitives (boxing them) and
-            undefined, but the definition was then read from argv[0] as an object
-            regardless, so only objects (and null) ever worked. Anything else is
-            now rejected as bad arguments.
-    */
-    if (argc != 1 || (!JS_IsNull(OOJS_ARGV[0]) && !JS_IsObject(OOJS_ARGV[0]))) {
-        OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1), OOJS_ARGV, NULL, @"shipyard item definition");
-        return OOJSNativeFailure(context);
+    if (argc != 1 || (!JSVAL_IS_NULL(OOJS_ARGV[0]) && !JS_ValueToObject(context, OOJS_ARGV[0], &params))) {
+        OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1U), OOJS_ARGV, NULL, @"shipyard item definition");
+        return NO;
     }
 
     // make sure the station has a shipyard
     if (![station hasShipyard]) {
         OOJSReportWarningForCaller(context, @"Station", @"removeShipFromShipyard", @"Station does not have shipyard.");
-        return OOJSNativeFailure(context);
+        return NO;
     }
     // make sure the shipyard has been generated
     if (![station localShipyard])
         [station generateShipyard];
     NSMutableArray* shipyard = [station localShipyard];
 
-    if (JS_IsNull(OOJS_ARGV[0]))
+    if (JSVAL_IS_NULL(OOJS_ARGV[0]))
         OOJS_RETURN_VOID; // OK, do nothing for null ship.
 
     NSMutableDictionary* result = [NSMutableDictionary dictionary];
-    NSDictionary* shipyardDefinition = OOJSNativeObjectFromJSObject(context, OOJS_ARGV[0]);
+    NSDictionary* shipyardDefinition = OOJSNativeObjectFromJSObject(context, JSVAL_TO_OBJECT(OOJS_ARGV[0]));
     // validate each element of the dictionary
     if (!shipyardDefinition) {
-        OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1), OOJS_ARGV, nil, @"valid dictionary object");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1U), OOJS_ARGV, nil, @"valid dictionary object");
+        return NO;
     }
     if (![shipyardDefinition objectForKey:KEY_SHORT_DESCRIPTION]) {
-        OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1), OOJS_ARGV, nil, @"'short_description' in dictionary");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1U), OOJS_ARGV, nil, @"'short_description' in dictionary");
+        return NO;
     }
     [result setObject:[shipyardDefinition oo_stringForKey:@"short_description"] forKey:KEY_SHORT_DESCRIPTION];
     if (![shipyardDefinition objectForKey:SHIPYARD_KEY_SHIPDATA_KEY]) {
-        OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1), OOJS_ARGV, nil, @"'shipdata_key' in dictionary");
-        return OOJSNativeFailure(context);
+        OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1U), OOJS_ARGV, nil, @"'shipdata_key' in dictionary");
+        return NO;
     }
     // get the shipInfo and shipyardInfo for this key
     NSString* shipKey = [shipyardDefinition oo_stringForKey:SHIPYARD_KEY_SHIPDATA_KEY defaultValue:nil];
@@ -991,16 +948,16 @@ static JSValue StationAddShipToShipyard(OOJS_NATIVE_ARGS)
     NSDictionary* shipyardInfo = [registry shipyardInfoForKey:shipKey];
     if (!shipInfo) {
         OOJSReportWarningForCaller(context, @"Station", @"addShipToShipyard", @"Invalid shipdata_key provided.");
-        return OOJSNativeFailure(context);
+        return NO;
     }
     // make sure the ship is a player ship
     if ([[shipInfo oo_stringForKey:@"roles"] rangeOfString:@"player"].location == NSNotFound) {
         OOJSReportWarningForCaller(context, @"Station", @"addShipToShipyard", @"shipdata_key not suitable for player role.");
-        return OOJSNativeFailure(context);
+        return NO;
     }
     if (!shipyardInfo) {
         OOJSReportWarningForCaller(context, @"Station", @"addShipToShipyard", @"No shipyard information found for shipdata_key.");
-        return OOJSNativeFailure(context);
+        return NO;
     }
     // ok, feel pretty safe to include this ship now
     [result setObject:shipKey forKey:SHIPYARD_KEY_SHIPDATA_KEY];
@@ -1022,8 +979,8 @@ static JSValue StationAddShipToShipyard(OOJS_NATIVE_ARGS)
         if (price > 0) {
             [result setObject:[NSNumber numberWithUnsignedLongLong:price] forKey:SHIPYARD_KEY_PRICE];
         } else {
-            OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1), OOJS_ARGV, nil, @"'price' in dictionary");
-            return OOJSNativeFailure(context);
+            OOJSReportBadArguments(context, @"Station", @"addShipToShipyard", MIN(argc, 1U), OOJS_ARGV, nil, @"'price' in dictionary");
+            return NO;
         }
     }
 
@@ -1088,30 +1045,31 @@ static JSValue StationAddShipToShipyard(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue StationRemoveShipFromShipyard(OOJS_NATIVE_ARGS)
+static JSBool StationRemoveShipFromShipyard(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     StationEntity* station = nil;
-    GET_THIS_STATION(station);
+    if (!JSStationGetStationEntity(context, OOJS_THIS, &station))
+        OOJS_RETURN_VOID; // stale reference, no-op
 
     // make sure the station has a shipyard
     if (![station hasShipyard]) {
         OOJSReportWarningForCaller(context, @"Station", @"removeShipFromShipyard", @"Station does not have shipyard.");
-        return OOJSNativeFailure(context);
+        return NO;
     }
     // make sure the shipyard has been generated
     if (![station localShipyard])
         [station generateShipyard];
     NSMutableArray* shipyard = [station localShipyard];
 
-    int32_t shipIndex = -1;
+    int32 shipIndex = -1;
     BOOL gotIndex = YES;
-    gotIndex = OOJSValueToInt32(context, OOJS_ARGV[0], &shipIndex); // argv[0] is undefined if argc is 0 (min args 1).
+    gotIndex = JS_ValueToInt32(context, OOJS_ARGV[0], &shipIndex);
 
-    if (argc != 1 || (!JS_IsNull(OOJS_ARGV[0]) && !gotIndex) || shipIndex < 0 || (shipIndex + 1) > [shipyard count]) {
-        OOJSReportBadArguments(context, @"Station", @"removeShipFromShipyard", MIN(argc, 1), OOJS_ARGV, NULL, @"valid ship index");
-        return OOJSNativeFailure(context);
+    if (argc != 1 || (!JSVAL_IS_NULL(OOJS_ARGV[0]) && !gotIndex) || shipIndex < 0 || (shipIndex + 1) > [shipyard count]) {
+        OOJSReportBadArguments(context, @"Station", @"removeShipFromShipyard", MIN(argc, 1U), OOJS_ARGV, NULL, @"valid ship index");
+        return NO;
     }
 
     [shipyard removeObjectAtIndex:shipIndex];

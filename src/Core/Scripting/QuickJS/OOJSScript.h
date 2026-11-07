@@ -1,6 +1,6 @@
 /*
 
-OOJSScript.h (QuickJS-ng)
+OOJSScript.h
 
 JavaScript support for Oolite
 Copyright (C) 2007-2013 David Taylor and Jens Ayton.
@@ -29,7 +29,7 @@ static NSString* const kLocalManifestProperty = @"oolite_manifest_identifier";
 
 @interface OOJSScript : OOScript <OOWeakReferenceSupport> {
 @private
-    JSValue _jsSelf; // Owned.
+    JSObject* _jsSelf;
 
     NSString* name;
     NSString* description;
@@ -55,19 +55,20 @@ static NSString* const kLocalManifestProperty = @"oolite_manifest_identifier";
 + (void)popScript:(OOJSScript*)script;
 
 /*	Call a method.
-        outResult may be NULL; if not, it is owned by the caller.
+        Requires a request on context.
+        outResult may be NULL.
 */
-- (BOOL)callMethod:(JSAtom)methodID
+- (BOOL)callMethod:(jsid)methodID
          inContext:(JSContext*)context
-     withArguments:(JSValueConst*)argv
-             count:(int)argc
-            result:(JSValue*)outResult;
+     withArguments:(jsval*)argv
+             count:(intN)argc
+            result:(jsval*)outResult;
 
-- (id)propertyWithID:(JSAtom)propID inContext:(JSContext*)context;
+- (id)propertyWithID:(jsid)propID inContext:(JSContext*)context;
 // Set a property which can be modified or deleted by the script.
-- (BOOL)setProperty:(id)value withID:(JSAtom)propID inContext:(JSContext*)context;
+- (BOOL)setProperty:(id)value withID:(jsid)propID inContext:(JSContext*)context;
 // Set a special property which cannot be modified or deleted by the script.
-- (BOOL)defineProperty:(id)value withID:(JSAtom)propID inContext:(JSContext*)context;
+- (BOOL)defineProperty:(id)value withID:(jsid)propID inContext:(JSContext*)context;
 
 - (id)propertyNamed:(NSString*)name;
 - (BOOL)setProperty:(id)value named:(NSString*)name;
@@ -78,12 +79,12 @@ static NSString* const kLocalManifestProperty = @"oolite_manifest_identifier";
 @interface OOScript (JavaScriptEvents)
 
 // For simplicity, calling methods on non-JS scripts works but does nothing.
-- (BOOL)callMethod:(JSAtom)methodID
+- (BOOL)callMethod:(jsid)methodID
          inContext:(JSContext*)context
-     withArguments:(JSValueConst*)argv
-             count:(int)argc
-            result:(JSValue*)outResult;
+     withArguments:(jsval*)argv
+             count:(intN)argc
+            result:(jsval*)outResult;
 
 @end
 
-void InitOOJSScript(JSContext* context, JSValueConst global);
+void InitOOJSScript(JSContext* context, JSObject* global);

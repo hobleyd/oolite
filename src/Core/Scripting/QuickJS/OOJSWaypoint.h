@@ -1,6 +1,6 @@
 /*
 
-OOJSWaypoint.h (QuickJS-ng)
+OOJSWaypoint.h
 
 JavaScript proxy for OOWaypointEntities.
 
@@ -25,21 +25,17 @@ MA 02110-1301, USA.
 */
 
 #pragma once
-
 #import "OOWaypointEntity.h"
 #import <Foundation/Foundation.h>
-#include <quickjs.h>
+#include <jsapi.h>
 
 @class OOWaypointEntity;
 
-void InitOOJSWaypoint(JSContext* context, JSValueConst global);
-
-JSClassID JSWaypointClassID(void);
+void InitOOJSWaypoint(JSContext* context, JSObject* global);
 
 @interface OOWaypointEntity (OOJavaScriptExtensions)
 
-// Replaces SpiderMonkey's -getJSClass:andPrototype:.
-- (JSClassID)oo_jsClassID;
+- (void)getJSClass:(JSClass**)outClass andPrototype:(JSObject**)outPrototype;
 - (NSString*)oo_jsClassName;
 - (BOOL)isVisibleToScripts;
 
