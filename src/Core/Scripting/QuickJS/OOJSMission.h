@@ -26,7 +26,7 @@ MA 02110-1301, USA.
 */
 
 #import <Foundation/Foundation.h>
-#include <quickjs.h>
+#include <jsapi.h>
 
-void InitOOJSMission(JSContext* context, JSValueConst global);
+void InitOOJSMission(JSContext* context, JSObject* global);
 void MissionRunCallback(void);

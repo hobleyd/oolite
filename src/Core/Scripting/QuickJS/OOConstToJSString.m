@@ -30,11 +30,11 @@ MA 02110-1301, USA.
         TableEntry structs plus a count.
 
         The list is statically initialized with the constant values and C strings.
-        OOConstToJSStringInit() (through InitTable()) adds an interned JSAtom for
-        each C string. Atoms are interned once per process (they belong to the
-        runtime, which survives engine resets) and are never freed. Two atoms are
-        equal if and only if their strings are equal, so lookups from JS strings
-        compare atoms.
+        OOConstToJSStringInit() (through InitTable()) replaces the C strings with
+        interned JSStrings (hence the void * type). These are subsequently
+        constant and no other strings with the same value should occur, i.e. they
+        should be comparable with pointer equality. Because I'm paranoid, we fall
+        back to full string comparison if this fails.
 
         ConstTables are globals, which are accessed as local externs in the inlines
         in the header. All the advantages of globals with most of the advantages
@@ -47,7 +47,7 @@ typedef struct
 {
     NSInteger value;
     const char* cString;
-    JSAtom atom;
+    JSString* jsString;
 } TableEntry;
 
 typedef struct ConstTable {
@@ -58,13 +58,12 @@ typedef struct ConstTable {
 #define TABLE(entries) { sizeof entries / sizeof *entries, entries }
 
 static BOOL sInited = NO;
-static BOOL sAtomsInterned = NO;
 
 /*
-        The interned string "UNDEFINED", returned by OOJSValueFromConstantPRIVATE()
+        The interned string "UNDEFINED", returned by OOJSStringFromConstantPRIVATE()
         if passed a bogus constant value.
 */
-static JSAtom sUndefinedAtom;
+static JSString* sUndefinedString;
 
 /*
         Initialize table contents (with C strings, see above) from table files.
@@ -130,24 +129,19 @@ static void InitTable(JSContext* context, ConstTable* table);
 void OOConstToJSStringInit(JSContext* context)
 {
     NSCAssert(!sInited, @"OOConstToJSStringInit() called while already inited.");
-    NSCParameterAssert(context != NULL);
+    NSCParameterAssert(context != NULL && JS_IsInRequest(context));
 
-    // Atoms survive engine resets, so they only need interning once.
-    if (!sAtomsInterned) {
-        sUndefinedAtom = JS_NewAtom(context, "UNDEFINED");
+    sUndefinedString = JS_InternString(context, "UNDEFINED");
 
-        InitTable(context, &gOOEntityStatusConstTable);
-        InitTable(context, &gOOCompassModeConstTable);
-        InitTable(context, &gOOGalacticHyperspaceBehaviourConstTable);
-        InitTable(context, &gOOGUIScreenIDConstTable);
-        InitTable(context, &gOOScanClassConstTable);
-        InitTable(context, &gOOViewIDConstTable);
-        InitTable(context, &gOOShipDamageTypeConstTable);
-        InitTable(context, &gOOLegalStatusReasonConstTable);
-        InitTable(context, &gOOLongRangeChartModeConstTable);
-
-        sAtomsInterned = YES;
-    }
+    InitTable(context, &gOOEntityStatusConstTable);
+    InitTable(context, &gOOCompassModeConstTable);
+    InitTable(context, &gOOGalacticHyperspaceBehaviourConstTable);
+    InitTable(context, &gOOGUIScreenIDConstTable);
+    InitTable(context, &gOOScanClassConstTable);
+    InitTable(context, &gOOViewIDConstTable);
+    InitTable(context, &gOOShipDamageTypeConstTable);
+    InitTable(context, &gOOLegalStatusReasonConstTable);
+    InitTable(context, &gOOLongRangeChartModeConstTable);
 
     sInited = YES;
 }
@@ -156,7 +150,7 @@ void OOConstToJSStringDestroy(void)
 {
     NSCAssert(sInited, @"OOConstToJSStringDestroy() called while not inited.");
     sInited = NO;
-    // The atoms remain valid; they belong to the runtime.
+    // jsString pointers are now officially junk.
 }
 
 static int CompareEntries(const void* a, const void* b)
@@ -173,11 +167,11 @@ static int CompareEntries(const void* a, const void* b)
 
 static void InitTable(JSContext* context, ConstTable* table)
 {
-    NSCParameterAssert(context != NULL && table != NULL);
+    NSCParameterAssert(context != NULL && JS_IsInRequest(context) && table != NULL);
 
     NSUInteger i;
     for (i = 0; i < table->count; i++) {
-        table->entries[i].atom = JS_NewAtom(context, table->entries[i].cString);
+        table->entries[i].jsString = JS_InternString(context, table->entries[i].cString);
     }
 
     qsort(table->entries, table->count, sizeof *table->entries, CompareEntries);
@@ -185,54 +179,62 @@ static void InitTable(JSContext* context, ConstTable* table)
 
 // MARK: Lookup
 
-JSValue OOJSValueFromConstantPRIVATE(JSContext* context, NSInteger value, struct ConstTable* table)
+JSString* OOJSStringFromConstantPRIVATE(JSContext* context, NSInteger value, struct ConstTable* table)
 {
     NSCAssert1(sInited, @"%s called before OOConstToJSStringInit().", __PRETTY_FUNCTION__);
-    NSCParameterAssert(context != NULL);
+    NSCParameterAssert(context != NULL && JS_IsInRequest(context));
     NSCParameterAssert(table != NULL && table->count > 0);
 
-    // Binary search. (Signed bounds: the SpiderMonkey version underflowed for values below the first entry.)
-    NSInteger min = 0, max = (NSInteger)table->count - 1;
+    // Binary search.
+    NSUInteger min = 0, max = table->count - 1;
     NSInteger current;
-    while (min <= max) {
-        NSInteger mid = (min + max) / 2;
+    do {
+        NSUInteger mid = (min + max) / 2;
         current = table->entries[mid].value;
         if (current < value) {
             min = mid + 1;
         } else if (current > value) {
             max = mid - 1;
         } else {
-            return JS_AtomToString(context, table->entries[mid].atom);
+            return table->entries[mid].jsString;
         }
-    }
+    } while (min <= max);
 
-    return JS_AtomToString(context, sUndefinedAtom);
+    return sUndefinedString;
 }
 
-NSUInteger OOConstantFromJSValuePRIVATE(JSContext* context, JSValueConst value, struct ConstTable* table, NSInteger defaultValue)
+NSUInteger OOConstantFromJSStringPRIVATE(JSContext* context, JSString* string, struct ConstTable* table, NSInteger defaultValue)
 {
     NSCAssert1(sInited, @"%s called before OOConstToJSStringInit().", __PRETTY_FUNCTION__);
-    NSCParameterAssert(context != NULL && table != NULL);
+    NSCParameterAssert(context != NULL && JS_IsInRequest(context) && table != NULL);
 
-    if (EXPECT_NOT(!JS_IsString(value)))
-        return defaultValue;
-
-    // Interning a string yields the same atom as the table entry with the same contents.
-    JSAtom atom = JS_ValueToAtom(context, value);
-    if (EXPECT_NOT(atom == JS_ATOM_NULL)) {
-        JS_FreeValue(context, JS_GetException(context));
-        return defaultValue;
-    }
-
-    NSInteger result = defaultValue;
+    // Quick pass: look for pointer-equal string.
     NSUInteger i, count = table->count;
     for (i = 0; i < count; i++) {
-        if (table->entries[i].atom == atom) {
-            result = table->entries[i].value;
-            break;
+        if (table->entries[i].jsString == string) {
+            return table->entries[i].value;
         }
     }
 
-    JS_FreeAtom(context, atom);
-    return result;
+    // Slow pass: use string comparison. This is expected to fail.
+    if (string != NULL) {
+        for (i = 0; i < count; i++) {
+            int32 result;
+            if (JS_CompareStrings(context, string, table->entries[i].jsString, &result) && result == 0) {
+                return table->entries[i].value;
+            }
+        }
+    }
+
+    // Fail.
+    return defaultValue;
+}
+
+NSUInteger OOConstantFromJSValuePRIVATE(JSContext* context, jsval value, struct ConstTable* table, NSInteger defaultValue)
+{
+    if (EXPECT(JSVAL_IS_STRING(value))) {
+        return OOConstantFromJSStringPRIVATE(context, JSVAL_TO_STRING(value), table, defaultValue);
+    } else {
+        return defaultValue;
+    }
 }

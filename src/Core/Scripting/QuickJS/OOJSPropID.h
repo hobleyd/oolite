@@ -1,9 +1,10 @@
 /*
 
-OOJSPropID.h (QuickJS-ng)
+OOJSPropID.h
 
-Oolite
-Copyright (C) 2004-2013 Giles C Williams and contributors
+
+JavaScript support for Oolite
+Copyright (C) 2007-2013 David Taylor and Jens Ayton.
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -23,19 +24,21 @@ MA 02110-1301, USA.
 */
 
 #import "OOFunctionAttributes.h"
-#include <quickjs.h>
+#include <jsapi.h>
 
-/*	Engine-neutral names for a property ID and a value (jsid and jsval with
-        SpiderMonkey). Declared here, rather than in OOJavaScriptEngine.h, so game
-        headers imported by OOJavaScriptEngine.h can use them.
-*/
-typedef JSAtom OOJSPropID;
-typedef JSValue OOJSVal;
+/*	Engine-neutral name for a property ID (JSAtom with QuickJS).
+ */
+typedef jsid OOJSPropID;
 
 /*
         OOJSID(const char * [literal])
-        Macro to create a property ID. The string is interned the first time the
-        macro is hit, then cached; the atom lives as long as the runtime.
+        Macro to create a string-based jsid. The string is interned and converted
+        into a string by a helper the first time the macro is hit, then cached.
 */
-#define OOJSID(str) ({ static JSAtom idCache = JS_ATOM_NULL; if (EXPECT_NOT(idCache == JS_ATOM_NULL)) idCache = OOJSInternAtomPRIVATE(""str); idCache; })
-JSAtom OOJSInternAtomPRIVATE(const char* name);
+
+#ifdef JS_USE_JSVAL_JSID_STRUCT_TYPES
+#define OOJSID(str) ({ static jsid idCache; static JSBool inited; if (EXPECT_NOT(!inited)) { OOJSInitJSIDCachePRIVATE(""str, &idCache); inited = JS_TRUE; } idCache; })
+#else
+#define OOJSID(str) ({ static jsid idCache = JSID_VOID; if (EXPECT_NOT(idCache == JSID_VOID)) OOJSInitJSIDCachePRIVATE(""str, &idCache); idCache; })
+#endif
+void OOJSInitJSIDCachePRIVATE(const char* name, jsid* idCache);

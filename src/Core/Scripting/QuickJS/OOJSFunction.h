@@ -26,37 +26,34 @@ MA 02110-1301, USA.
 */
 
 #import "OOFoundation.h"
-#include <quickjs.h>
+#include <jsapi.h>
 
 @interface OOJSFunction : NSObject {
 @private
-    JSValue _function; // Owned; zero-filled (not an object) when invalid.
+    JSFunction* _function;
     NSString* _name;
 }
 
-// function must be a function value; the OOJSFunction takes its own reference.
-- (id)initWithFunction:(JSValueConst)function context:(JSContext*)context;
+- (id)initWithFunction:(JSFunction*)function context:(JSContext*)context;
 - (id)initWithName:(NSString*)name
-             scope:(JSValueConst)scope // Ignored; QuickJS compiles functions in the global scope. Pass JS_UNDEFINED.
-              code:(NSString*)code // Function body.
+             scope:(JSObject*)scope // may be NULL, in which case global object is used.
+              code:(NSString*)code // full JS code for function, including function declaration.
      argumentCount:(NSUInteger)argCount
      argumentNames:(const char**)argNames
           fileName:(NSString*)fileName
         lineNumber:(NSUInteger)lineNumber
-           context:(JSContext*)context; // may be NULL.
+           context:(JSContext*)context; // may be NULL. If not null, must be in a request.
 
 - (NSString*)name;
-// Borrowed; valid while the receiver is alive and the engine is not reset. JS_NULL if invalid.
-- (JSValueConst)function;
-// Owned (caller must free). JS_NULL if invalid.
-- (JSValue)functionValue;
+- (JSFunction*)function;
+- (jsval)functionValue;
 
-// Raw evaluation. *result is owned by the caller on success. On failure, any exception is left pending (not reported).
+// Raw evaluation. Context may not be NULL and must be in a request.
 - (BOOL)evaluateWithContext:(JSContext*)context
-                      scope:(JSValueConst)jsThis
-                       argc:(int)argc
-                       argv:(JSValueConst*)argv
-                     result:(JSValue*)result;
+                      scope:(JSObject*)jsThis
+                       argc:(uintN)argc
+                       argv:(jsval*)argv
+                     result:(jsval*)result;
 
 // Object-wrapper evaluation.
 - (id)evaluateWithContext:(JSContext*)context

@@ -1,6 +1,6 @@
 /*
 
-OOJSDock.h (QuickJS-ng)
+OOJSDock.h
 
 JavaScript proxy for DockEntities.
 
@@ -28,10 +28,8 @@ MA 02110-1301, USA.
 
 #import "DockEntity.h"
 #import <Foundation/Foundation.h>
-#include <quickjs.h>
+#include <jsapi.h>
 
 @class DockEntity;
 
-void InitOOJSDock(JSContext* context, JSValueConst global);
-
-JSClassID JSDockClassID(void);
+void InitOOJSDock(JSContext* context, JSObject* global);

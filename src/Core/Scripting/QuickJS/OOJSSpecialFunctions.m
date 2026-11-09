@@ -24,54 +24,57 @@ MA 02110-1301, USA.
 */
 
 #import "OOJSSpecialFunctions.h"
+#include <jsdbgapi.h>
 
-static JSValue SpecialJSWarning(OOJS_NATIVE_ARGS);
+static JSBool SpecialJSWarning(JSContext* context, uintN argc, jsval* vp);
 #ifdef OO_DEBUG_MONITOR_ENABLED
-static JSValue SpecialMarkConsoleEntryPoint(OOJS_NATIVE_ARGS);
+static JSBool SpecialMarkConsoleEntryPoint(JSContext* context, uintN argc, jsval* vp);
 #endif
 
-static const JSCFunctionListEntry sSpecialFunctionsMethods[] = {
+static JSFunctionSpec sSpecialFunctionsMethods[] = {
     // JS name					Function						min args
-    JS_CFUNC_DEF("jsWarning", 1, SpecialJSWarning),
+    { "jsWarning", SpecialJSWarning, 1 },
 #ifdef OO_DEBUG_MONITOR_ENABLED
-    JS_CFUNC_DEF("markConsoleEntryPoint", 0, SpecialMarkConsoleEntryPoint),
+    { "markConsoleEntryPoint", SpecialMarkConsoleEntryPoint, 0 },
 #endif
+    { 0 }
 };
 
-void InitOOJSSpecialFunctions(JSContext* context, JSValueConst global)
+void InitOOJSSpecialFunctions(JSContext* context, JSObject* global)
 {
 }
 
-JSValue JSSpecialFunctionsObjectWrapper(JSContext* context)
+OOJSValue* JSSpecialFunctionsObjectWrapper(JSContext* context)
 {
     /*
             Special object is created on the fly so it can be GCed (the debug
             console script keeps a reference to its copy, but the prefix script
             doesn't) and so we don't need to clean up a root on JS engine reset.
             -- Ahruman 2011-03-30
-
-            With QuickJS, the caller owns the returned object.
     */
 
-    JSValue special = JS_NewObject(context);
-    if (JS_IsException(special)) {
-        OOJSReportPendingException(context);
-        return JS_NULL;
-    }
-    JS_SetPropertyFunctionList(context, special, sSpecialFunctionsMethods, OOJS_COUNT(sSpecialFunctionsMethods));
+    JSObject* special = NULL;
+    OOJSAddGCObjectRoot(context, &special, "OOJSSpecialFunctions");
+
+    special = JS_NewObject(context, NULL, NULL, NULL);
+    JS_DefineFunctions(context, special, sSpecialFunctionsMethods);
     JS_FreezeObject(context, special);
 
-    return special;
+    OOJSValue* result = [OOJSValue valueWithJSObject:special inContext:context];
+
+    JS_RemoveObjectRoot(context, &special);
+
+    return result;
 }
 
-static JSValue SpecialJSWarning(OOJS_NATIVE_ARGS)
+static JSBool SpecialJSWarning(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_PROFILE_ENTER // These functions are exception-safe
 
         if (EXPECT_NOT(argc < 1))
     {
         OOJSReportBadArguments(context, @"special", @"jsWarning", argc, OOJS_ARGV, nil, @"string");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     OOJSSetWarningOrErrorStackSkip(1);
@@ -84,15 +87,15 @@ static JSValue SpecialJSWarning(OOJS_NATIVE_ARGS)
 }
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
-static JSValue SpecialMarkConsoleEntryPoint(OOJS_NATIVE_ARGS)
+static JSBool SpecialMarkConsoleEntryPoint(JSContext* context, uintN argc, jsval* vp)
 {
-    /*	The SpiderMonkey version recorded the calling stack frame (in eval() in
-            console.script.evaluate()) with OOJSMarkConsoleEvalLocation(), so that
-            OOJSDescribeLocation() could describe locations in console-evaluated
-            code specially. QuickJS has no stack frame API and the engine has no
-            OOJSDescribeLocation(), so this does nothing; locations in console
-            code are reported like any other.
-    */
+    // First stack frame will be in eval() in console.script.evaluate(), unless someone is playing silly buggers.
+
+    JSStackFrame* frame = NULL;
+    if (JS_FrameIterator(context, &frame) != NULL) {
+        OOJSMarkConsoleEvalLocation(context, frame);
+    }
+
     OOJS_RETURN_VOID;
 }
 #endif

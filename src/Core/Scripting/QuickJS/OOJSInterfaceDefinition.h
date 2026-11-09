@@ -1,6 +1,6 @@
 /*
 
-OOJSInterfaceDefinition.h (QuickJS-ng)
+OOJSInterfaceDefinition.h
 
 
 Oolite
@@ -24,15 +24,12 @@ MA 02110-1301, USA.
 */
 
 #import "OOJSScript.h"
-#include <quickjs.h>
+#include <jsapi.h>
 
-/*	The definition owns references to its callback and callbackThis, which are
-        released on dealloc and when the JavaScript engine is reset.
-*/
 @interface OOJSInterfaceDefinition : OOWeakRefObject {
 @private
-    JSValue _callback; // Owned.
-    JSValue _callbackThis; // Owned.
+    jsval _callback;
+    JSObject* _callbackThis;
     OOJSScript* _owningScript;
 
     NSString* _title;
@@ -46,11 +43,10 @@ MA 02110-1301, USA.
 - (void)setCategory:(NSString*)category;
 - (NSString*)summary;
 - (void)setSummary:(NSString*)summary;
-// Returned values are owned by the caller.
-- (JSValue)callback;
-- (void)setCallback:(JSValueConst)callback;
-- (JSValue)callbackThis;
-- (void)setCallbackThis:(JSValueConst)callbackthis;
+- (jsval)callback;
+- (void)setCallback:(jsval)callback;
+- (JSObject*)callbackThis;
+- (void)setCallbackThis:(JSObject*)callbackthis;
 
 - (void)runCallback:(NSString*)key;
 

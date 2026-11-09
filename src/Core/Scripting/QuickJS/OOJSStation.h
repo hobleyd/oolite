@@ -1,6 +1,6 @@
 /*
 
-OOJSStation.h (QuickJS-ng)
+OOJSStation.h
 
 JavaScript proxy for StationEntities.
 
@@ -28,10 +28,8 @@ MA 02110-1301, USA.
 
 #import "StationEntity.h"
 #import <Foundation/Foundation.h>
-#include <quickjs.h>
+#include <jsapi.h>
 
 @class StationEntity;
 
-void InitOOJSStation(JSContext* context, JSValueConst global);
-
-JSClassID JSStationClassID(void);
+void InitOOJSStation(JSContext* context, JSObject* global);

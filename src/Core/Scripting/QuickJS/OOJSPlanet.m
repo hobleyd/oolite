@@ -1,6 +1,6 @@
 /*
 
-OOJSPlanet.m (QuickJS-ng)
+OOJSPlanet.m
 
 
 Oolite
@@ -24,21 +24,29 @@ MA 02110-1301, USA.
 */
 
 #import "OOJSPlanet.h"
-#import "EntityOOJavaScriptExtensions.h"
 #import "OOJSEntity.h"
 #import "OOJSQuaternion.h"
 #import "OOJSVector.h"
 #import "OOJavaScriptEngine.h"
-#import "OOPlanetEntity.h"
 
-static JSClassID sPlanetClassID;
+static JSObject* sPlanetPrototype;
 
-static JSValue PlanetGetProperty(OOJS_GETTER_ARGS);
-static JSValue PlanetSetProperty(OOJS_SETTER_ARGS);
+static JSBool PlanetGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool PlanetSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
 
-static JSClassDef sPlanetClass = {
-    .class_name = "Planet",
-    .finalizer = OOJSObjectWrapperFinalize,
+static JSClass sPlanetClass = {
+    "Planet",
+    JSCLASS_HAS_PRIVATE,
+
+    JS_PropertyStub, // addProperty
+    JS_PropertyStub, // delProperty
+    PlanetGetProperty, // getProperty
+    PlanetSetProperty, // setProperty
+    JS_EnumerateStub, // enumerate
+    JS_ResolveStub, // resolve
+    JS_ConvertStub, // convert
+    OOJSObjectWrapperFinalize, // finalize
+    JSCLASS_NO_OPTIONAL_MEMBERS
 };
 
 enum {
@@ -57,41 +65,30 @@ enum {
     kPlanet_terminatorThresholdVector,
 };
 
-static const JSCFunctionListEntry sPlanetProperties[] = {
-    // JS name, getter, setter, ID
-    OOJS_PROPERTY_RW("airColor", PlanetGetProperty, PlanetSetProperty, kPlanet_airColor),
-    OOJS_PROPERTY_RW("airColorMixRatio", PlanetGetProperty, PlanetSetProperty, kPlanet_airColorMixRatio),
-    OOJS_PROPERTY_RW("airDensity", PlanetGetProperty, PlanetSetProperty, kPlanet_airDensity),
-    OOJS_PROPERTY_RO("hasAtmosphere", PlanetGetProperty, kPlanet_hasAtmosphere),
-    OOJS_PROPERTY_RW("illuminationColor", PlanetGetProperty, PlanetSetProperty, kPlanet_illuminationColor),
-    OOJS_PROPERTY_RO("isMainPlanet", PlanetGetProperty, kPlanet_isMainPlanet),
-    OOJS_PROPERTY_RW("name", PlanetGetProperty, PlanetSetProperty, kPlanet_name),
-    OOJS_PROPERTY_RO("radius", PlanetGetProperty, kPlanet_radius),
-    OOJS_PROPERTY_RW("rotationalVelocity", PlanetGetProperty, PlanetSetProperty, kPlanet_rotationalVelocity),
-    OOJS_PROPERTY_RW("texture", PlanetGetProperty, PlanetSetProperty, kPlanet_texture),
-    OOJS_PROPERTY_RW("orientation", PlanetGetProperty, PlanetSetProperty, kPlanet_orientation), // Not documented since it's inherited from Entity
-    OOJS_PROPERTY_RW("terminatorThresholdVector", PlanetGetProperty, PlanetSetProperty, kPlanet_terminatorThresholdVector),
+static JSPropertySpec sPlanetProperties[] = {
+    // JS name					ID							flags
+    { "airColor", kPlanet_airColor, OOJS_PROP_READWRITE_CB },
+    { "airColorMixRatio", kPlanet_airColorMixRatio, OOJS_PROP_READWRITE_CB },
+    { "airDensity", kPlanet_airDensity, OOJS_PROP_READWRITE_CB },
+    { "hasAtmosphere", kPlanet_hasAtmosphere, OOJS_PROP_READONLY_CB },
+    { "illuminationColor", kPlanet_illuminationColor, OOJS_PROP_READWRITE_CB },
+    { "isMainPlanet", kPlanet_isMainPlanet, OOJS_PROP_READONLY_CB },
+    { "name", kPlanet_name, OOJS_PROP_READWRITE_CB },
+    { "radius", kPlanet_radius, OOJS_PROP_READONLY_CB },
+    { "rotationalVelocity", kPlanet_rotationalVelocity, OOJS_PROP_READWRITE_CB },
+    { "texture", kPlanet_texture, OOJS_PROP_READWRITE_CB },
+    { "orientation", kPlanet_orientation, OOJS_PROP_READWRITE_CB }, // Not documented since it's inherited from Entity
+    { "terminatorThresholdVector", kPlanet_terminatorThresholdVector, OOJS_PROP_READWRITE_CB },
+    { 0 }
 };
 
-DEFINE_JS_OBJECT_GETTER(JSPlanetGetPlanetEntity, sPlanetClassID, OOPlanetEntity)
+DEFINE_JS_OBJECT_GETTER(JSPlanetGetPlanetEntity, &sPlanetClass, sPlanetPrototype, OOPlanetEntity)
 
-void InitOOJSPlanet(JSContext* context, JSValueConst global)
+void InitOOJSPlanet(JSContext* context, JSObject* global)
 {
-    OOJSRegisterClass(&sPlanetClassID, &sPlanetClass);
-
-    JSValue parentPrototype = JS_GetClassProto(context, JSEntityClassID());
-    NSCAssert(JS_IsObject(parentPrototype), @"Entity must be initialized before Planet.");
-    OOJSInitClass(context, global, sPlanetClassID, parentPrototype, OOJSUnconstructableConstruct, 0,
-        sPlanetProperties, OOJS_COUNT(sPlanetProperties), NULL, 0, NULL, 0);
-    JS_FreeValue(context, parentPrototype);
-
-    OOJSRegisterObjectConverter(sPlanetClassID, OOJSBasicPrivateObjectConverter);
-    OOJSRegisterSubclass(sPlanetClassID, JSEntityClassID());
-}
-
-JSClassID JSPlanetClassID(void)
-{
-    return sPlanetClassID;
+    sPlanetPrototype = JS_InitClass(context, global, JSEntityPrototype(), &sPlanetClass, OOJSUnconstructableConstruct, 0, sPlanetProperties, NULL, NULL, NULL);
+    OOJSRegisterObjectConverter(&sPlanetClass, OOJSBasicPrivateObjectConverter);
+    OOJSRegisterSubclass(&sPlanetClass, JSEntityClass());
 }
 
 @implementation OOPlanetEntity (OOJavaScriptExtensions)
@@ -102,9 +99,10 @@ JSClassID JSPlanetClassID(void)
     return type == STELLAR_TYPE_NORMAL_PLANET || type == STELLAR_TYPE_MOON;
 }
 
-- (JSClassID)oo_jsClassID
+- (void)getJSClass:(JSClass**)outClass andPrototype:(JSObject**)outPrototype
 {
-    return sPlanetClassID;
+    *outClass = &sPlanetClass;
+    *outPrototype = sPlanetPrototype;
 }
 
 - (NSString*)oo_jsClassName
@@ -121,112 +119,124 @@ JSClassID JSPlanetClassID(void)
 
 @end
 
-static JSValue PlanetGetProperty(OOJS_GETTER_ARGS)
+static JSBool PlanetGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     OOPlanetEntity* planet = nil;
     if (!JSPlanetGetPlanetEntity(context, this, &planet))
-        return OOJSNativeFailure(context);
+        return NO;
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kPlanet_airColor:
-        return OOJSValueFromNativeObject(context, [[planet airColor] normalizedArray]);
+        *value = OOJSValueFromNativeObject(context, [[planet airColor] normalizedArray]);
+        return YES;
 
     case kPlanet_airColorMixRatio:
-        return JS_NewNumber(context, [planet airColorMixRatio]);
+        return JS_NewNumberValue(context, [planet airColorMixRatio], value);
 
     case kPlanet_airDensity:
-        return JS_NewNumber(context, [planet airDensity]);
+        return JS_NewNumberValue(context, [planet airDensity], value);
 
     case kPlanet_illuminationColor:
-        return OOJSValueFromNativeObject(context, [[planet illuminationColor] normalizedArray]);
+        *value = OOJSValueFromNativeObject(context, [[planet illuminationColor] normalizedArray]);
+        return YES;
 
     case kPlanet_isMainPlanet:
-        return OOJSValueFromBOOL(planet == (id)[UNIVERSE planet]);
+        *value = OOJSValueFromBOOL(planet == (id)[UNIVERSE planet]);
+        return YES;
 
     case kPlanet_radius:
-        return JS_NewNumber(context, [planet radius]);
+        return JS_NewNumberValue(context, [planet radius], value);
 
     case kPlanet_hasAtmosphere:
-        return OOJSValueFromBOOL([planet hasAtmosphere]);
+        *value = OOJSValueFromBOOL([planet hasAtmosphere]);
+        return YES;
 
     case kPlanet_texture:
-        return OOJSValueFromNativeObject(context, [planet textureFileName]);
+        *value = OOJSValueFromNativeObject(context, [planet textureFileName]);
+        return YES;
 
     case kPlanet_name:
-        return OOJSValueFromNativeObject(context, [planet name]);
+        *value = OOJSValueFromNativeObject(context, [planet name]);
+        return YES;
 
     case kPlanet_orientation:
-        OOJS_RETURN_QUATERNION([planet normalOrientation]);
+        return QuaternionToJSValue(context, [planet normalOrientation], value);
 
     case kPlanet_rotationalVelocity:
-        return JS_NewNumber(context, [planet rotationalVelocity]);
+        return JS_NewNumberValue(context, [planet rotationalVelocity], value);
 
     case kPlanet_terminatorThresholdVector:
-        OOJS_RETURN_VECTOR([planet terminatorThresholdVector]);
+        return VectorToJSValue(context, [planet terminatorThresholdVector], value);
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sPlanetProperties, OOJS_COUNT(sPlanetProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sPlanetProperties);
+        return NO;
     }
 
     OOJS_NATIVE_EXIT
 }
 
-static JSValue PlanetSetProperty(OOJS_SETTER_ARGS)
+static JSBool PlanetSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     OOPlanetEntity* planet = nil;
     NSString* sValue = nil;
     Quaternion qValue;
     Vector vValue;
-    double dValue;
+    jsdouble dValue;
     OOColor* colorForScript = nil;
 
     if (!JSPlanetGetPlanetEntity(context, this, &planet))
-        return OOJSNativeFailure(context);
+        return NO;
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kPlanet_airColor:
-        colorForScript = [OOColor colorWithDescription:OOJSNativeObjectFromJSValue(context, value)];
-        if (colorForScript != nil || JS_IsNull(value)) {
+        colorForScript = [OOColor colorWithDescription:OOJSNativeObjectFromJSValue(context, *value)];
+        if (colorForScript != nil || JSVAL_IS_NULL(*value)) {
             [planet setAirColor:colorForScript];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlanet_airColorMixRatio:
-        if (JS_ToFloat64(context, &dValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &dValue)) {
             [planet setAirColorMixRatio:dValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlanet_airDensity:
-        if (JS_ToFloat64(context, &dValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &dValue)) {
             [planet setAirDensity:dValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlanet_illuminationColor:
-        colorForScript = [OOColor colorWithDescription:OOJSNativeObjectFromJSValue(context, value)];
-        if (colorForScript != nil || JS_IsNull(value)) {
+        colorForScript = [OOColor colorWithDescription:OOJSNativeObjectFromJSValue(context, *value)];
+        if (colorForScript != nil || JSVAL_IS_NULL(*value)) {
             [planet setIlluminationColor:colorForScript];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlanet_name:
-        sValue = OOStringFromJSValue(context, value);
+        sValue = OOStringFromJSValue(context, *value);
         [planet setName:sValue];
-        return JS_UNDEFINED;
+        return YES;
 
     case kPlanet_texture: {
         BOOL OK = NO;
-        sValue = OOStringFromJSValue(context, value);
+        sValue = OOStringFromJSValue(context, *value);
 
         OOJSPauseTimeLimiter();
 
@@ -246,38 +256,38 @@ static JSValue PlanetSetProperty(OOJS_SETTER_ARGS)
 
         OOJSResumeTimeLimiter();
 
-        return JS_UNDEFINED; // Even if !OK, no exception was raised.
+        return YES; // Even if !OK, no exception was raised.
     }
 
     case kPlanet_orientation:
-        if (JSValueToQuaternion(context, value, &qValue)) {
+        if (JSValueToQuaternion(context, *value, &qValue)) {
             quaternion_normalize(&qValue);
             [planet setOrientation:qValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlanet_rotationalVelocity:
-        if (JS_ToFloat64(context, &dValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &dValue)) {
             [planet setRotationalVelocity:dValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kPlanet_terminatorThresholdVector:
-        if (JSValueToVector(context, value, &vValue)) {
+        if (JSValueToVector(context, *value, &vValue)) {
             [planet setTerminatorThresholdVector:vValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sPlanetProperties, OOJS_COUNT(sPlanetProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sPlanetProperties);
+        return NO;
     }
 
-    OOJSReportBadPropertyValue(context, this, magic, sPlanetProperties, OOJS_COUNT(sPlanetProperties), value);
-    return OOJSNativeFailure(context);
+    OOJSReportBadPropertyValue(context, this, propID, sPlanetProperties, *value);
+    return NO;
 
     OOJS_NATIVE_EXIT
 }

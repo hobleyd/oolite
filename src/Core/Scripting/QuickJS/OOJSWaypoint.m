@@ -1,5 +1,5 @@
 /*
-OOJSWaypoint.m (QuickJS-ng)
+OOJSWaypoint.m
 
 Oolite
 Copyright (C) 2004-2013 Giles C Williams and contributors
@@ -28,18 +28,27 @@ MA 02110-1301, USA.
 #import "OOJSQuaternion.h"
 #import "OOJSVector.h"
 #import "OOJavaScriptEngine.h"
-#import "OOWaypointEntity.h"
 
-static JSClassID sWaypointClassID;
+static JSObject* sWaypointPrototype;
 
-static BOOL JSWaypointGetWaypointEntity(JSContext* context, JSValueConst waypointObj, OOWaypointEntity** outEntity);
+static BOOL JSWaypointGetWaypointEntity(JSContext* context, JSObject* stationObj, OOWaypointEntity** outEntity);
 
-static JSValue WaypointGetProperty(OOJS_GETTER_ARGS);
-static JSValue WaypointSetProperty(OOJS_SETTER_ARGS);
+static JSBool WaypointGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
+static JSBool WaypointSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
 
-static JSClassDef sWaypointClass = {
-    .class_name = "Waypoint",
-    .finalizer = OOJSObjectWrapperFinalize,
+static JSClass sWaypointClass = {
+    "Waypoint",
+    JSCLASS_HAS_PRIVATE,
+
+    JS_PropertyStub, // addProperty
+    JS_PropertyStub, // delProperty
+    WaypointGetProperty, // getProperty
+    WaypointSetProperty, // setProperty
+    JS_EnumerateStub, // enumerate
+    JS_ResolveStub, // resolve
+    JS_ConvertStub, // convert
+    OOJSObjectWrapperFinalize, // finalize
+    JSCLASS_NO_OPTIONAL_MEMBERS
 };
 
 enum {
@@ -50,36 +59,29 @@ enum {
     kWaypoint_size
 };
 
-static const JSCFunctionListEntry sWaypointProperties[] = {
-    // JS name, getter, setter, ID
-    OOJS_PROPERTY_RW("beaconCode", WaypointGetProperty, WaypointSetProperty, kWaypoint_beaconCode),
-    OOJS_PROPERTY_RW("beaconLabel", WaypointGetProperty, WaypointSetProperty, kWaypoint_beaconLabel),
-    OOJS_PROPERTY_RW("orientation", WaypointGetProperty, WaypointSetProperty, kWaypoint_orientation),
-    OOJS_PROPERTY_RW("size", WaypointGetProperty, WaypointSetProperty, kWaypoint_size),
+static JSPropertySpec sWaypointProperties[] = {
+    // JS name						ID						flags
+    { "beaconCode", kWaypoint_beaconCode, OOJS_PROP_READWRITE_CB },
+    { "beaconLabel", kWaypoint_beaconLabel, OOJS_PROP_READWRITE_CB },
+    { "orientation", kWaypoint_orientation, OOJS_PROP_READWRITE_CB },
+    { "size", kWaypoint_size, OOJS_PROP_READWRITE_CB },
+    { 0 }
 };
 
-// No Waypoint methods.
+static JSFunctionSpec sWaypointMethods[] = {
+    // JS name					Function						min args
+    //	{ "",     WaypointDoStuff,    0 },
+    { 0 }
+};
 
-void InitOOJSWaypoint(JSContext* context, JSValueConst global)
+void InitOOJSWaypoint(JSContext* context, JSObject* global)
 {
-    OOJSRegisterClass(&sWaypointClassID, &sWaypointClass);
-
-    JSValue parentPrototype = JS_GetClassProto(context, JSEntityClassID());
-    NSCAssert(JS_IsObject(parentPrototype), @"Entity must be initialized before Waypoint.");
-    OOJSInitClass(context, global, sWaypointClassID, parentPrototype, OOJSUnconstructableConstruct, 0,
-        sWaypointProperties, OOJS_COUNT(sWaypointProperties), NULL, 0, NULL, 0);
-    JS_FreeValue(context, parentPrototype);
-
-    OOJSRegisterObjectConverter(sWaypointClassID, OOJSBasicPrivateObjectConverter);
-    OOJSRegisterSubclass(sWaypointClassID, JSEntityClassID());
+    sWaypointPrototype = JS_InitClass(context, global, JSEntityPrototype(), &sWaypointClass, OOJSUnconstructableConstruct, 0, sWaypointProperties, sWaypointMethods, NULL, NULL);
+    OOJSRegisterObjectConverter(&sWaypointClass, OOJSBasicPrivateObjectConverter);
+    OOJSRegisterSubclass(&sWaypointClass, JSEntityClass());
 }
 
-JSClassID JSWaypointClassID(void)
-{
-    return sWaypointClassID;
-}
-
-static BOOL JSWaypointGetWaypointEntity(JSContext* context, JSValueConst waypointObj, OOWaypointEntity** outEntity)
+static BOOL JSWaypointGetWaypointEntity(JSContext* context, JSObject* wormholeObj, OOWaypointEntity** outEntity)
 {
     OOJS_PROFILE_ENTER
 
@@ -90,7 +92,7 @@ static BOOL JSWaypointGetWaypointEntity(JSContext* context, JSValueConst waypoin
         return NO;
     *outEntity = nil;
 
-    result = OOJSEntityGetEntity(context, waypointObj, &entity);
+    result = OOJSEntityGetEntity(context, wormholeObj, &entity);
     if (!result)
         return NO;
 
@@ -105,9 +107,10 @@ static BOOL JSWaypointGetWaypointEntity(JSContext* context, JSValueConst waypoin
 
 @implementation OOWaypointEntity (OOJavaScriptExtensions)
 
-- (JSClassID)oo_jsClassID
+- (void)getJSClass:(JSClass**)outClass andPrototype:(JSObject**)outPrototype
 {
-    return sWaypointClassID;
+    *outClass = &sWaypointClass;
+    *outPrototype = sWaypointPrototype;
 }
 
 - (NSString*)oo_jsClassName
@@ -122,8 +125,11 @@ static BOOL JSWaypointGetWaypointEntity(JSContext* context, JSValueConst waypoin
 
 @end
 
-static JSValue WaypointGetProperty(OOJS_GETTER_ARGS)
+static JSBool WaypointGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     OOWaypointEntity* entity = nil;
@@ -131,12 +137,13 @@ static JSValue WaypointGetProperty(OOJS_GETTER_ARGS)
     Quaternion q = kIdentityQuaternion;
 
     if (!JSWaypointGetWaypointEntity(context, this, &entity))
-        return OOJSNativeFailure(context);
+        return NO;
     if (entity == nil) {
-        return JS_UNDEFINED;
+        *value = JSVAL_VOID;
+        return YES;
     }
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kWaypoint_beaconCode:
         result = [entity beaconCode];
         break;
@@ -150,38 +157,42 @@ static JSValue WaypointGetProperty(OOJS_GETTER_ARGS)
         if (![entity oriented]) {
             q = kZeroQuaternion;
         }
-        OOJS_RETURN_QUATERNION(q);
+        return QuaternionToJSValue(context, q, value);
 
     case kWaypoint_size:
-        return JS_NewNumber(context, [entity size]);
+        return JS_NewNumberValue(context, [entity size], value);
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sWaypointProperties, OOJS_COUNT(sWaypointProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sWaypointProperties);
+        return NO;
     }
 
-    return OOJSValueFromNativeObject(context, result);
+    *value = OOJSValueFromNativeObject(context, result);
+    return YES;
 
     OOJS_NATIVE_EXIT
 }
 
-static JSValue WaypointSetProperty(OOJS_SETTER_ARGS)
+static JSBool WaypointSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     OOWaypointEntity* entity = nil;
-    double fValue;
+    jsdouble fValue;
     NSString* sValue = nil;
     Quaternion qValue;
 
     if (!JSWaypointGetWaypointEntity(context, this, &entity))
-        return OOJSNativeFailure(context);
+        return NO;
     if (entity == nil)
-        return JS_UNDEFINED;
+        return YES;
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kWaypoint_beaconCode:
-        sValue = OOStringFromJSValue(context, value);
+        sValue = OOStringFromJSValue(context, *value);
         if (sValue == nil || [sValue length] == 0) {
             if ([entity isBeacon]) {
                 [UNIVERSE clearBeacon:entity];
@@ -198,40 +209,42 @@ static JSValue WaypointSetProperty(OOJS_SETTER_ARGS)
                 [UNIVERSE setNextBeacon:entity];
             }
         }
-        return JS_UNDEFINED;
+        return YES;
         break;
 
     case kWaypoint_beaconLabel:
-        sValue = OOStringFromJSValue(context, value);
+        sValue = OOStringFromJSValue(context, *value);
         if (sValue != nil) {
             [entity setBeaconLabel:sValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kWaypoint_orientation:
-        if (JSValueToQuaternion(context, value, &qValue)) {
+        if (JSValueToQuaternion(context, *value, &qValue)) {
             [entity setNormalOrientation:qValue];
-            return JS_UNDEFINED;
+            return YES;
         }
         break;
 
     case kWaypoint_size:
-        if (JS_ToFloat64(context, &fValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &fValue)) {
             if (fValue > 0.0) {
                 [entity setSize:fValue];
-                return JS_UNDEFINED;
+                return YES;
             }
         }
         break;
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sWaypointProperties, OOJS_COUNT(sWaypointProperties));
-        return OOJSNativeFailure(context);
+        OOJSReportBadPropertySelector(context, this, propID, sWaypointProperties);
+        return NO;
     }
 
-    OOJSReportBadPropertyValue(context, this, magic, sWaypointProperties, OOJS_COUNT(sWaypointProperties), value);
-    return OOJSNativeFailure(context);
+    OOJSReportBadPropertyValue(context, this, propID, sWaypointProperties, *value);
+    return NO;
 
     OOJS_NATIVE_EXIT
 }
+
+// *** Methods ***

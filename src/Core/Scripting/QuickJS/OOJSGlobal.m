@@ -54,38 +54,52 @@ MA 02110-1301, USA.
 
 static NSString* const kOOLogDebugMessage = @"script.debug.message";
 
-static JSValue GlobalGetProperty(OOJS_GETTER_ARGS);
+static JSBool GlobalGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value);
 #ifdef OO_DEBUG_MONITOR_ENABLED
-static JSValue GlobalSetProperty(OOJS_SETTER_ARGS);
+static JSBool GlobalSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value);
 #endif
 
-static JSValue GlobalLog(OOJS_NATIVE_ARGS);
-static JSValue GlobalExpandDescription(OOJS_NATIVE_ARGS);
-static JSValue GlobalKeyBindingDescription(OOJS_NATIVE_ARGS);
-static JSValue GlobalExpandMissionText(OOJS_NATIVE_ARGS);
-static JSValue GlobalDisplayNameForCommodity(OOJS_NATIVE_ARGS);
-static JSValue GlobalRandomName(OOJS_NATIVE_ARGS);
-static JSValue GlobalRandomInhabitantsDescription(OOJS_NATIVE_ARGS);
-static JSValue GlobalSetScreenBackground(OOJS_NATIVE_ARGS);
-static JSValue GlobalSetScreenOverlay(OOJS_NATIVE_ARGS);
-static JSValue GlobalGetScreenBackgroundForKey(OOJS_NATIVE_ARGS);
-static JSValue GlobalSetScreenBackgroundForKey(OOJS_NATIVE_ARGS);
-static JSValue GlobalAutoAIForRole(OOJS_NATIVE_ARGS);
-static JSValue GlobalPauseGame(OOJS_NATIVE_ARGS);
-static JSValue GlobalGetGuiColorSettingForKey(OOJS_NATIVE_ARGS);
-static JSValue GlobalSetGuiColorSettingForKey(OOJS_NATIVE_ARGS);
-static JSValue GlobalSetExtraGuiScreenKeys(OOJS_NATIVE_ARGS);
-static JSValue GlobalClearExtraGuiScreenKeys(OOJS_NATIVE_ARGS);
+static JSBool GlobalLog(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalExpandDescription(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalKeyBindingDescription(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalExpandMissionText(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalDisplayNameForCommodity(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalRandomName(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalRandomInhabitantsDescription(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalSetScreenBackground(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalSetScreenOverlay(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalGetScreenBackgroundForKey(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalSetScreenBackgroundForKey(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalAutoAIForRole(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalPauseGame(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalQuitGame(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalGetGuiColorSettingForKey(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalSetGuiColorSettingForKey(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalSetExtraGuiScreenKeys(JSContext* context, uintN argc, jsval* vp);
+static JSBool GlobalClearExtraGuiScreenKeys(JSContext* context, uintN argc, jsval* vp);
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
-static JSValue GlobalTakeSnapShot(OOJS_NATIVE_ARGS);
-static JSValue GlobalQuitGame(OOJS_NATIVE_ARGS);
+static JSBool GlobalTakeSnapShot(JSContext* context, uintN argc, jsval* vp);
 #endif
 
-/*	QuickJS's global object is an ordinary object, so the SpiderMonkey global
-        class's tinyid getter and setter become accessor properties defined on
-        the global object.
-*/
+static JSClass sGlobalClass = {
+    "Global",
+    JSCLASS_GLOBAL_FLAGS,
+
+    JS_PropertyStub,
+    JS_PropertyStub,
+    GlobalGetProperty,
+#ifdef OO_DEBUG_MONITOR_ENABLED
+    GlobalSetProperty,
+#else
+    // No writeable properties in non-debug builds
+    JS_StrictPropertyStub,
+#endif
+    JS_EnumerateStub,
+    JS_ResolveStub,
+    JS_ConvertStub,
+    JS_FinalizeStub
+};
 
 enum {
     // Property IDs
@@ -97,96 +111,114 @@ enum {
 #endif
 };
 
-static const JSCFunctionListEntry sGlobalProperties[] = {
-    // JS name					Getter				Setter				ID
-    OOJS_PROPERTY_RO("galaxyNumber", GlobalGetProperty, kGlobal_galaxyNumber),
-    OOJS_PROPERTY_RO("guiScreen", GlobalGetProperty, kGlobal_guiScreen),
+static JSPropertySpec sGlobalProperties[] = {
+    // JS name					ID							flags
+    { "galaxyNumber", kGlobal_galaxyNumber, OOJS_PROP_READONLY_CB },
+    { "guiScreen", kGlobal_guiScreen, OOJS_PROP_READONLY_CB },
 #ifdef OO_DEBUG_MONITOR_ENABLED
-    OOJS_PROPERTY_RW("timeAccelerationFactor", GlobalGetProperty, GlobalSetProperty, kGlobal_timeAccelerationFactor),
+    { "timeAccelerationFactor", kGlobal_timeAccelerationFactor, OOJS_PROP_READWRITE_CB },
 #endif
+    { 0 }
 };
 
-static const JSCFunctionListEntry sGlobalMethods[] = {
+static JSFunctionSpec sGlobalMethods[] = {
     // JS name							Function								min args
-    JS_CFUNC_DEF("log", 1, GlobalLog),
-    JS_CFUNC_DEF("autoAIForRole", 1, GlobalAutoAIForRole),
-    JS_CFUNC_DEF("expandDescription", 1, GlobalExpandDescription),
-    JS_CFUNC_DEF("expandMissionText", 1, GlobalExpandMissionText),
-    JS_CFUNC_DEF("displayNameForCommodity", 1, GlobalDisplayNameForCommodity),
-    JS_CFUNC_DEF("randomName", 0, GlobalRandomName),
-    JS_CFUNC_DEF("randomInhabitantsDescription", 1, GlobalRandomInhabitantsDescription),
-    JS_CFUNC_DEF("setScreenBackground", 1, GlobalSetScreenBackground),
-    JS_CFUNC_DEF("getScreenBackgroundForKey", 1, GlobalGetScreenBackgroundForKey),
-    JS_CFUNC_DEF("setScreenBackgroundForKey", 2, GlobalSetScreenBackgroundForKey),
-    JS_CFUNC_DEF("setScreenOverlay", 1, GlobalSetScreenOverlay),
-    JS_CFUNC_DEF("getGuiColorSettingForKey", 1, GlobalGetGuiColorSettingForKey),
-    JS_CFUNC_DEF("setGuiColorSettingForKey", 2, GlobalSetGuiColorSettingForKey),
-    JS_CFUNC_DEF("keyBindingDescription", 1, GlobalKeyBindingDescription),
-    JS_CFUNC_DEF("setExtraGuiScreenKeys", 2, GlobalSetExtraGuiScreenKeys),
-    JS_CFUNC_DEF("clearExtraGuiScreenKeys", 2, GlobalClearExtraGuiScreenKeys),
+    { "log", GlobalLog, 1 },
+    { "autoAIForRole", GlobalAutoAIForRole, 1 },
+    { "expandDescription", GlobalExpandDescription, 1 },
+    { "expandMissionText", GlobalExpandMissionText, 1 },
+    { "displayNameForCommodity", GlobalDisplayNameForCommodity, 1 },
+    { "randomName", GlobalRandomName, 0 },
+    { "randomInhabitantsDescription", GlobalRandomInhabitantsDescription, 1 },
+    { "setScreenBackground", GlobalSetScreenBackground, 1 },
+    { "getScreenBackgroundForKey", GlobalGetScreenBackgroundForKey, 1 },
+    { "setScreenBackgroundForKey", GlobalSetScreenBackgroundForKey, 2 },
+    { "setScreenOverlay", GlobalSetScreenOverlay, 1 },
+    { "getGuiColorSettingForKey", GlobalGetGuiColorSettingForKey, 1 },
+    { "setGuiColorSettingForKey", GlobalSetGuiColorSettingForKey, 2 },
+    { "keyBindingDescription", GlobalKeyBindingDescription, 1 },
+    { "setExtraGuiScreenKeys", GlobalSetExtraGuiScreenKeys, 2 },
+    { "clearExtraGuiScreenKeys", GlobalClearExtraGuiScreenKeys, 2 },
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
-    JS_CFUNC_DEF("takeSnapShot", 1, GlobalTakeSnapShot),
-    JS_CFUNC_DEF("quitGame", 0, GlobalQuitGame),
+    { "takeSnapShot", GlobalTakeSnapShot, 1 },
+    { "quitGame", GlobalQuitGame, 0 },
 #endif
-    JS_CFUNC_DEF("pauseGame", 0, GlobalPauseGame),
+    { "pauseGame", GlobalPauseGame, 0 },
+    { 0 }
 };
 
-void SetUpOOJSGlobal(JSContext* context, JSValueConst global)
+void CreateOOJSGlobal(JSContext* context, JSObject** outGlobal)
 {
-    JS_SetPropertyFunctionList(context, global, sGlobalProperties, OOJS_COUNT(sGlobalProperties));
-    JS_SetPropertyFunctionList(context, global, sGlobalMethods, OOJS_COUNT(sGlobalMethods));
+    assert(outGlobal != NULL);
+
+    *outGlobal = JS_NewCompartmentAndGlobalObject(context, &sGlobalClass, NULL);
+
+    JS_SetGlobalObject(context, *outGlobal);
+    JS_DefineProperty(context, *outGlobal, "global", OBJECT_TO_JSVAL(*outGlobal), NULL, NULL, OOJS_PROP_READONLY);
 }
 
-static JSValue GlobalGetProperty(OOJS_GETTER_ARGS)
+void SetUpOOJSGlobal(JSContext* context, JSObject* global)
 {
+    JS_DefineProperties(context, global, sGlobalProperties);
+    JS_DefineFunctions(context, global, sGlobalMethods);
+}
+
+static JSBool GlobalGetProperty(JSContext* context, JSObject* this, jsid propID, jsval* value)
+{
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
     PlayerEntity* player = OOPlayerForScripting();
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kGlobal_galaxyNumber:
-        return JS_NewInt32(context, [player currentGalaxyID]);
+        *value = INT_TO_JSVAL([player currentGalaxyID]);
+        return YES;
 
     case kGlobal_guiScreen:
-        return OOJSValueFromGUIScreenID(context, [player guiScreen]);
+        *value = OOJSValueFromGUIScreenID(context, [player guiScreen]);
+        return YES;
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
     case kGlobal_timeAccelerationFactor:
-        return JS_NewNumber(context, [UNIVERSE timeAccelerationFactor]);
+        return JS_NewNumberValue(context, [UNIVERSE timeAccelerationFactor], value);
 #endif
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sGlobalProperties, OOJS_COUNT(sGlobalProperties));
-        return JS_EXCEPTION;
+        OOJSReportBadPropertySelector(context, this, propID, sGlobalProperties);
+        return NO;
     }
 
     OOJS_NATIVE_EXIT
 }
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
-static JSValue GlobalSetProperty(OOJS_SETTER_ARGS)
+static JSBool GlobalSetProperty(JSContext* context, JSObject* this, jsid propID, JSBool strict, jsval* value)
 {
+    if (!JSID_IS_INT(propID))
+        return YES;
+
     OOJS_NATIVE_ENTER(context)
 
-    double fValue;
+    jsdouble fValue;
 
-    switch (magic) {
+    switch (JSID_TO_INT(propID)) {
     case kGlobal_timeAccelerationFactor:
-        if (JS_ToFloat64(context, &fValue, value) == 0) {
+        if (JS_ValueToNumber(context, *value, &fValue)) {
             [UNIVERSE setTimeAccelerationFactor:fValue];
-            return JS_UNDEFINED;
+            return YES;
         }
-        JS_FreeValue(context, JS_GetException(context));
         break;
 
     default:
-        OOJSReportBadPropertySelector(context, this, magic, sGlobalProperties, OOJS_COUNT(sGlobalProperties));
-        return JS_EXCEPTION;
+        OOJSReportBadPropertySelector(context, this, propID, sGlobalProperties);
     }
 
-    OOJSReportBadPropertyValue(context, this, magic, sGlobalProperties, OOJS_COUNT(sGlobalProperties), value);
-    return JS_EXCEPTION;
+    OOJSReportBadPropertyValue(context, this, propID, sGlobalProperties, *value);
+    return NO;
 
     OOJS_NATIVE_EXIT
 }
@@ -195,7 +227,7 @@ static JSValue GlobalSetProperty(OOJS_SETTER_ARGS)
 // *** Methods ***
 
 // log([messageClass : String,] message : string, ...)
-static JSValue GlobalLog(OOJS_NATIVE_ARGS)
+static JSBool GlobalLog(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -234,7 +266,7 @@ static JSValue GlobalLog(OOJS_NATIVE_ARGS)
 }
 
 // expandDescription(description : String [, overrides : object (dictionary)]) : String
-static JSValue GlobalExpandDescription(OOJS_NATIVE_ARGS)
+static JSBool GlobalExpandDescription(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -244,8 +276,8 @@ static JSValue GlobalExpandDescription(OOJS_NATIVE_ARGS)
     if (argc > 0)
         string = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (string == nil) {
-        OOJSReportBadArguments(context, nil, @"expandDescription", MIN(argc, 1), OOJS_ARGV, nil, @"string");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, nil, @"expandDescription", MIN(argc, 1U), OOJS_ARGV, nil, @"string");
+        return NO;
     }
     if (argc > 1) {
         overrides = OOJSDictionaryFromStringTable(context, OOJS_ARGV[1]);
@@ -260,7 +292,7 @@ static JSValue GlobalExpandDescription(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue GlobalKeyBindingDescription(OOJS_NATIVE_ARGS)
+static JSBool GlobalKeyBindingDescription(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -270,8 +302,8 @@ static JSValue GlobalKeyBindingDescription(OOJS_NATIVE_ARGS)
     if (argc > 0)
         string = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (string == nil) {
-        OOJSReportBadArguments(context, nil, @"keyBindingDescription", MIN(argc, 1), OOJS_ARGV, nil, @"string");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, nil, @"keyBindingDescription", MIN(argc, 1U), OOJS_ARGV, nil, @"string");
+        return NO;
     }
 
     OOJS_BEGIN_FULL_NATIVE(context)
@@ -284,7 +316,7 @@ static JSValue GlobalKeyBindingDescription(OOJS_NATIVE_ARGS)
 }
 
 // expandMissionText(textKey : String [, overrides : object (dictionary)]) : String
-static JSValue GlobalExpandMissionText(OOJS_NATIVE_ARGS)
+static JSBool GlobalExpandMissionText(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -294,8 +326,8 @@ static JSValue GlobalExpandMissionText(OOJS_NATIVE_ARGS)
     if (argc > 0)
         string = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (string == nil) {
-        OOJSReportBadArguments(context, nil, @"expandMissionText", MIN(argc, 1), OOJS_ARGV, nil, @"string");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, nil, @"expandMissionText", MIN(argc, 1U), OOJS_ARGV, nil, @"string");
+        return NO;
     }
     if (argc > 1) {
         overrides = OOJSDictionaryFromStringTable(context, OOJS_ARGV[1]);
@@ -310,7 +342,7 @@ static JSValue GlobalExpandMissionText(OOJS_NATIVE_ARGS)
 }
 
 // displayNameForCommodity(commodityName : String) : String
-static JSValue GlobalDisplayNameForCommodity(OOJS_NATIVE_ARGS)
+static JSBool GlobalDisplayNameForCommodity(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -319,8 +351,8 @@ static JSValue GlobalDisplayNameForCommodity(OOJS_NATIVE_ARGS)
     if (argc > 0)
         string = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (string == nil) {
-        OOJSReportBadArguments(context, nil, @"displayNameForCommodity", MIN(argc, 1), OOJS_ARGV, nil, @"string");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, nil, @"displayNameForCommodity", MIN(argc, 1U), OOJS_ARGV, nil, @"string");
+        return NO;
     }
     OOJS_RETURN_OBJECT(CommodityDisplayNameForSymbolicName(string));
 
@@ -328,7 +360,7 @@ static JSValue GlobalDisplayNameForCommodity(OOJS_NATIVE_ARGS)
 }
 
 // randomName() : String
-static JSValue GlobalRandomName(OOJS_NATIVE_ARGS)
+static JSBool GlobalRandomName(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -349,18 +381,17 @@ static JSValue GlobalRandomName(OOJS_NATIVE_ARGS)
 }
 
 // randomInhabitantsDescription() : String
-static JSValue GlobalRandomInhabitantsDescription(OOJS_NATIVE_ARGS)
+static JSBool GlobalRandomInhabitantsDescription(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     NSString* string = nil;
     Random_Seed aSeed;
-    int isPlural = YES;
+    JSBool isPlural = YES;
 
-    if (argc > 0 && (isPlural = JS_ToBool(context, OOJS_ARGV[0])) < 0) {
-        JS_FreeValue(context, JS_GetException(context));
+    if (argc > 0 && !JS_ValueToBoolean(context, OOJS_ARGV[0], &isPlural)) {
         OOJSReportBadArguments(context, nil, @"randomInhabitantsDescription", 1, OOJS_ARGV, nil, @"boolean");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     make_pseudo_random_seed(&aSeed);
@@ -370,7 +401,7 @@ static JSValue GlobalRandomInhabitantsDescription(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue GlobalClearExtraGuiScreenKeys(OOJS_NATIVE_ARGS)
+static JSBool GlobalClearExtraGuiScreenKeys(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -379,19 +410,19 @@ static JSValue GlobalClearExtraGuiScreenKeys(OOJS_NATIVE_ARGS)
 
     if (EXPECT_NOT(argc < 2)) {
         OOJSReportBadArguments(context, nil, @"setExtraGuiScreenKeys", 0, OOJS_ARGV, nil, @"missing arguments");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     NSString* key = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (EXPECT_NOT(key == nil || [key isEqualToString:@""])) {
         OOJSReportBadArguments(context, nil, @"clearExtraGuiScreenKeys", 1, OOJS_ARGV, nil, @"key");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     OOGUIScreenID gui = OOGUIScreenIDFromJSValue(context, OOJS_ARGV[1]);
     if (!gui) {
         OOJSReportBadArguments(context, nil, @"clearExtraGuiScreenKeys", 0, OOJS_ARGV, nil, @"guiScreen invalid entry");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     [player clearExtraGuiScreenKeys:gui key:key];
@@ -402,127 +433,77 @@ static JSValue GlobalClearExtraGuiScreenKeys(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-/*	Get a property of a parameter object. Returns an owned value. If a getter
-        throws, the exception is reported and cleared and the property is treated
-        as undefined. (SpiderMonkey's JS_GetProperty() returned false, which the
-        callers below treat as a missing property; a native must not return
-        normally with an exception pending in QuickJS.)
-*/
-static JSValue GetParam(JSContext* context, JSValueConst object, const char* key)
-{
-    JSValue value = JS_GetPropertyStr(context, object, key);
-    if (JS_IsException(value)) {
-        OOJSReportPendingException(context);
-        return JS_UNDEFINED;
-    }
-    return value;
-}
-
-static JSValue GlobalSetExtraGuiScreenKeys(OOJS_NATIVE_ARGS)
+static JSBool GlobalSetExtraGuiScreenKeys(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     BOOL result = NO;
-    JSValue callback = JS_UNDEFINED;
-    JSValue value = JS_UNDEFINED;
+    jsval callback = JSVAL_NULL;
+    JSObject* callbackThis = NULL;
+    jsval value = JSVAL_NULL;
     NSString* key = nil;
     OOGUIScreenID gui;
     NSDictionary* keydefs = NULL;
-    JSValue params = JS_UNDEFINED;
+    JSObject* params = NULL;
     PlayerEntity* player = OOPlayerForScripting();
-    // The SpiderMonkey version always described two arguments from argv[1] on; don't read past argv.
-    int defArgc = MIN(argc - 1, 2);
 
     if (EXPECT_NOT(argc < 1)) {
         OOJSReportBadArguments(context, nil, @"setExtraGuiScreenKeys", 0, OOJS_ARGV, nil, @"key, definition");
-        return JS_EXCEPTION;
+        return NO;
     }
     key = OOStringFromJSValue(context, OOJS_ARGV[0]);
 
     // Validate arguments.
-    // (SpiderMonkey's JS_ValueToObject() accepted null and undefined, yielding no object; treat them as invalid.)
-    if (argc >= 2 && !JS_IsNull(OOJS_ARGV[1]) && !JS_IsUndefined(OOJS_ARGV[1])) {
-        params = JS_ToObject(context, OOJS_ARGV[1]);
-        if (JS_IsException(params)) {
-            JS_FreeValue(context, JS_GetException(context));
-            params = JS_UNDEFINED;
-        }
-    }
-    if (!JS_IsObject(params)) {
-        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", defArgc, &OOJS_ARGV[1], nil, @"key, definition: definition is not a valid dictionary.");
-        return JS_EXCEPTION;
+    if (argc < 2 || !JS_ValueToObject(context, OOJS_ARGV[1], &params)) {
+        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", 2, &OOJS_ARGV[1], nil, @"key, definition: definition is not a valid dictionary.");
+        return NO;
     }
 
-    value = GetParam(context, params, "guiScreen");
-    if (JS_IsUndefined(value)) {
-        JS_FreeValue(context, params);
-        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", defArgc, &OOJS_ARGV[1], nil, @"key, definition: must have a 'guiScreen' property.");
-        return JS_EXCEPTION;
+    if (JS_GetProperty(context, params, "guiScreen", &value) == JS_FALSE || JSVAL_IS_VOID(value)) {
+        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", 2, &OOJS_ARGV[1], nil, @"key, definition: must have a 'guiScreen' property.");
+        return NO;
     }
 
     gui = OOGUIScreenIDFromJSValue(context, value);
-    JS_FreeValue(context, value);
     // gui will be 0 for invalid screen id's as well as GUI_SCREEN_MAIN
     if (gui == 0 || gui == GUI_SCREEN_LOAD || gui == GUI_SCREEN_SAVE || gui == GUI_SCREEN_STICKMAPPER || gui == GUI_SCREEN_OXZMANAGER || gui == GUI_SCREEN_NEWGAME || gui == GUI_SCREEN_SAVE_OVERWRITE || gui == GUI_SCREEN_KEYBOARD || gui == GUI_SCREEN_STICKPROFILE || gui == GUI_SCREEN_KEYBOARD_CONFIRMCLEAR || gui == GUI_SCREEN_KEYBOARD_CONFIG || gui == GUI_SCREEN_KEYBOARD_ENTRY || gui == GUI_SCREEN_KEYBOARD_LAYOUT) {
-        JS_FreeValue(context, params);
-        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", defArgc, &OOJS_ARGV[1], nil, @"key, definition: 'guiScreen' property must be a permitted and valid GUI_SCREEN idenfifier.");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", 2, &OOJS_ARGV[1], nil, @"key, definition: 'guiScreen' property must be a permitted and valid GUI_SCREEN idenfifier.");
+        return NO;
     }
 
-    value = GetParam(context, params, "registerKeys");
-    if (JS_IsUndefined(value)) {
-        JS_FreeValue(context, params);
-        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", defArgc, &OOJS_ARGV[1], nil, @"key, definition: must have a 'registerKeys' property.");
-        return JS_EXCEPTION;
+    if (JS_GetProperty(context, params, "registerKeys", &value) == JS_FALSE || JSVAL_IS_VOID(value)) {
+        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", 2, &OOJS_ARGV[1], nil, @"key, definition: must have a 'registerKeys' property.");
+        return NO;
     }
-    if (!JS_IsNull(value)) {
-        if (JS_IsObject(value)) {
-            keydefs = OOJSNativeObjectFromJSObject(context, value);
+    if (!JSVAL_IS_NULL(value)) {
+        if (JSVAL_IS_OBJECT(value)) {
+            keydefs = OOJSNativeObjectFromJSObject(context, JSVAL_TO_OBJECT(value));
         } else {
-            JS_FreeValue(context, value);
-            JS_FreeValue(context, params);
-            OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", defArgc, &OOJS_ARGV[1], nil, @"key, definition: registerKeys is not a valid dictionary.");
-            return JS_EXCEPTION;
+            OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", 2, &OOJS_ARGV[1], nil, @"key, definition: registerKeys is not a valid dictionary.");
+            return NO;
         }
     }
-    JS_FreeValue(context, value);
 
-    callback = GetParam(context, params, "callback");
-    if (JS_IsUndefined(callback)) {
-        JS_FreeValue(context, params);
-        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", defArgc, &OOJS_ARGV[1], NULL, @"key, definition; must have a 'callback' property.");
-        return JS_EXCEPTION;
+    if (JS_GetProperty(context, params, "callback", &callback) == JS_FALSE || JSVAL_IS_VOID(callback)) {
+        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", 2, &OOJS_ARGV[1], NULL, @"key, definition; must have a 'callback' property.");
+        return NO;
     }
     if (!OOJSValueIsFunction(context, callback)) {
-        JS_FreeValue(context, callback);
-        JS_FreeValue(context, params);
-        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", defArgc, &OOJS_ARGV[1], NULL, @"key, definition; 'callback' property must be a function.");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, @"global", @"setExtraGuiScreenKeys", 2, &OOJS_ARGV[1], NULL, @"key, definition; 'callback' property must be a function.");
+        return NO;
     }
 
     OOJSGuiScreenKeyDefinition* definition = [[OOJSGuiScreenKeyDefinition alloc] init];
     [definition setName:key];
     [definition setRegisterKeys:keydefs];
-    [definition setCallback:callback]; // Takes its own reference.
-    JS_FreeValue(context, callback);
+    [definition setCallback:callback];
 
     // get callback 'this'
-    value = GetParam(context, params, "cbThis");
-    if (!JS_IsUndefined(value)) {
-        // As with SpiderMonkey's JS_ValueToObject(), null gives no object; primitives are boxed.
-        if (!JS_IsNull(value)) {
-            JSValue callbackThis = JS_ToObject(context, value);
-            if (JS_IsException(callbackThis)) {
-                JS_FreeValue(context, JS_GetException(context));
-            } else {
-                [definition setCallbackThis:callbackThis];
-            }
-            JS_FreeValue(context, callbackThis);
-        }
+    if (JS_GetProperty(context, params, "cbThis", &value) == JS_TRUE && !JSVAL_IS_VOID(value)) {
+        JS_ValueToObject(context, value, &callbackThis);
+        [definition setCallbackThis:callbackThis];
         // can do .bind(this) for callback instead
     }
-    JS_FreeValue(context, value);
-    JS_FreeValue(context, params);
 
     result = [player setExtraGuiScreenKeys:gui definition:definition];
     [definition release];
@@ -533,18 +514,18 @@ static JSValue GlobalSetExtraGuiScreenKeys(OOJS_NATIVE_ARGS)
 }
 
 // setScreenBackground(descriptor : guiTextureDescriptor) : Boolean
-static JSValue GlobalSetScreenBackground(OOJS_NATIVE_ARGS)
+static JSBool GlobalSetScreenBackground(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     BOOL result = NO;
-    JSValueConst value = (argc > 0) ? OOJS_ARGV[0] : JS_NULL;
+    jsval value = (argc > 0) ? OOJS_ARGV[0] : JSVAL_NULL;
 
     if (EXPECT_NOT(argc == 0)) {
         OOJSReportWarning(context, @"Usage error: %@() called with no arguments. Treating as %@(null). This call may fail in a future version of Oolite.", @"setScreenBackground", @"setScreenBackground");
-    } else if (EXPECT_NOT(JS_IsUndefined(value))) {
+    } else if (EXPECT_NOT(JSVAL_IS_VOID(value))) {
         OOJSReportBadArguments(context, nil, @"setScreenBackground", 1, &value, nil, @"GUI texture descriptor");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     if ([UNIVERSE viewDirection] == VIEW_GUI_DISPLAY) {
@@ -563,18 +544,18 @@ static JSValue GlobalSetScreenBackground(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue GlobalGetScreenBackgroundForKey(OOJS_NATIVE_ARGS)
+static JSBool GlobalGetScreenBackgroundForKey(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     if (EXPECT_NOT(argc == 0)) {
         OOJSReportBadArguments(context, nil, @"getScreenBackgroundDefault", 0, OOJS_ARGV, nil, @"missing arguments");
-        return JS_EXCEPTION;
+        return NO;
     }
     NSString* key = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (EXPECT_NOT(key == nil || [key isEqualToString:@""])) {
         OOJSReportBadArguments(context, nil, @"getScreenBackgroundDefault", 0, OOJS_ARGV, nil, @"key");
-        return JS_EXCEPTION;
+        return NO;
     }
     NSDictionary* descriptor = [UNIVERSE screenTextureDescriptorForKey:key];
 
@@ -584,7 +565,7 @@ static JSValue GlobalGetScreenBackgroundForKey(OOJS_NATIVE_ARGS)
 }
 
 // setScreenBackgroundDefault (key : NSString, descriptor : guiTextureDescriptor) : boolean
-static JSValue GlobalSetScreenBackgroundForKey(OOJS_NATIVE_ARGS)
+static JSBool GlobalSetScreenBackgroundForKey(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -592,14 +573,14 @@ static JSValue GlobalSetScreenBackgroundForKey(OOJS_NATIVE_ARGS)
 
     if (EXPECT_NOT(argc < 2)) {
         OOJSReportBadArguments(context, nil, @"setScreenBackgroundDefault", 0, OOJS_ARGV, nil, @"missing arguments");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     NSString* key = OOStringFromJSValue(context, OOJS_ARGV[0]);
-    JSValueConst value = OOJS_ARGV[1];
+    jsval value = OOJS_ARGV[1];
     if (EXPECT_NOT(key == nil || [key isEqualToString:@""])) {
         OOJSReportBadArguments(context, nil, @"setScreenBackgroundDefault", 0, OOJS_ARGV, nil, @"key");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     GuiDisplayGen* gui = [UNIVERSE gui];
@@ -614,18 +595,18 @@ static JSValue GlobalSetScreenBackgroundForKey(OOJS_NATIVE_ARGS)
 }
 
 // setScreenOverlay(descriptor : guiTextureDescriptor) : Boolean
-static JSValue GlobalSetScreenOverlay(OOJS_NATIVE_ARGS)
+static JSBool GlobalSetScreenOverlay(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     BOOL result = NO;
-    JSValueConst value = (argc > 0) ? OOJS_ARGV[0] : JS_NULL;
+    jsval value = (argc > 0) ? OOJS_ARGV[0] : JSVAL_NULL;
 
     if (EXPECT_NOT(argc == 0)) {
         OOJSReportWarning(context, @"Usage error: %@() called with no arguments. Treating as %@(null). This call may fail in a future version of Oolite.", @"setScreenOverlay", @"setScreenOverlay");
-    } else if (EXPECT_NOT(JS_IsUndefined(value))) {
+    } else if (EXPECT_NOT(JSVAL_IS_VOID(value))) {
         OOJSReportBadArguments(context, nil, @"setScreenOverlay", 1, &value, nil, @"GUI texture descriptor");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     if ([UNIVERSE viewDirection] == VIEW_GUI_DISPLAY) {
@@ -640,22 +621,22 @@ static JSValue GlobalSetScreenOverlay(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-static JSValue GlobalGetGuiColorSettingForKey(OOJS_NATIVE_ARGS)
+static JSBool GlobalGetGuiColorSettingForKey(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     if (EXPECT_NOT(argc == 0)) {
         OOJSReportBadArguments(context, nil, @"getGuiColorForKey", 0, OOJS_ARGV, nil, @"missing arguments");
-        return JS_EXCEPTION;
+        return NO;
     }
     NSString* key = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (EXPECT_NOT(key == nil || [key isEqualToString:@""])) {
         OOJSReportBadArguments(context, nil, @"getGuiColorForKey", 0, OOJS_ARGV, nil, @"key");
-        return JS_EXCEPTION;
+        return NO;
     }
     if ([key rangeOfString:@"color"].location == NSNotFound) {
         OOJSReportBadArguments(context, nil, @"getGuiColorForKey", 0, OOJS_ARGV, nil, @"valid color key setting");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     GuiDisplayGen* gui = [UNIVERSE gui];
@@ -667,7 +648,7 @@ static JSValue GlobalGetGuiColorSettingForKey(OOJS_NATIVE_ARGS)
 }
 
 // setGuiColorForKey(descriptor : OOColor) : boolean
-static JSValue GlobalSetGuiColorSettingForKey(OOJS_NATIVE_ARGS)
+static JSBool GlobalSetGuiColorSettingForKey(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -676,25 +657,25 @@ static JSValue GlobalSetGuiColorSettingForKey(OOJS_NATIVE_ARGS)
 
     if (EXPECT_NOT(argc != 2)) {
         OOJSReportBadArguments(context, nil, @"setGuiColorForKey", 0, OOJS_ARGV, nil, @"missing arguments");
-        return JS_EXCEPTION;
+        return NO;
     }
 
     NSString* key = OOStringFromJSValue(context, OOJS_ARGV[0]);
-    JSValueConst value = OOJS_ARGV[1];
+    jsval value = OOJS_ARGV[1];
     if (EXPECT_NOT(key == nil || [key isEqualToString:@""])) {
         OOJSReportBadArguments(context, nil, @"setGuiColorForKey", 0, OOJS_ARGV, nil, @"key");
-        return JS_EXCEPTION;
+        return NO;
     }
     if ([key rangeOfString:@"color"].location == NSNotFound) {
         OOJSReportBadArguments(context, nil, @"setGuiColorForKey", 0, OOJS_ARGV, nil, @"valid color key setting");
-        return JS_EXCEPTION;
+        return NO;
     }
 
-    if (!JS_IsNull(value)) {
+    if (!JSVAL_IS_NULL(value)) {
         col = [OOColor colorWithDescription:OOJSNativeObjectFromJSValue(context, value)];
         if (col == nil) {
             OOJSReportBadArguments(context, nil, @"setGuiColorForKey", 1, OOJS_ARGV, nil, @"color descriptor");
-            return JS_EXCEPTION;
+            return NO;
         }
     }
 
@@ -709,7 +690,7 @@ static JSValue GlobalSetGuiColorSettingForKey(OOJS_NATIVE_ARGS)
 
 #ifdef OO_DEBUG_MONITOR_ENABLED
 // takeSnapShot([name : alphanumeric String]) : Boolean
-static JSValue GlobalTakeSnapShot(OOJS_NATIVE_ARGS)
+static JSBool GlobalTakeSnapShot(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -723,7 +704,7 @@ static JSValue GlobalTakeSnapShot(OOJS_NATIVE_ARGS)
         value = OOStringFromJSValue(context, OOJS_ARGV[0]);
         if (EXPECT_NOT(value == nil || [value rangeOfCharacterFromSet:[allowedChars invertedSet]].location != NSNotFound)) {
             OOJSReportBadArguments(context, nil, @"takeSnapShot", argc, OOJS_ARGV, nil, @"alphanumeric string");
-            return JS_EXCEPTION;
+            return NO;
         }
     }
 
@@ -750,7 +731,7 @@ static JSValue GlobalTakeSnapShot(OOJS_NATIVE_ARGS)
 #endif
 
 // autoAIForRole(role : String) : String
-static JSValue GlobalAutoAIForRole(OOJS_NATIVE_ARGS)
+static JSBool GlobalAutoAIForRole(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -759,8 +740,8 @@ static JSValue GlobalAutoAIForRole(OOJS_NATIVE_ARGS)
     if (argc > 0)
         string = OOStringFromJSValue(context, OOJS_ARGV[0]);
     if (string == nil) {
-        OOJSReportBadArguments(context, nil, @"autoAIForRole", MIN(argc, 1), OOJS_ARGV, nil, @"string");
-        return JS_EXCEPTION;
+        OOJSReportBadArguments(context, nil, @"autoAIForRole", MIN(argc, 1U), OOJS_ARGV, nil, @"string");
+        return NO;
     }
 
     NSDictionary* autoAIMap = [ResourceManager dictionaryFromFilesNamed:@"autoAImap.plist" inFolder:@"Config" andMerge:YES];
@@ -772,7 +753,7 @@ static JSValue GlobalAutoAIForRole(OOJS_NATIVE_ARGS)
 }
 
 // pauseGame() : Boolean
-static JSValue GlobalPauseGame(OOJS_NATIVE_ARGS)
+static JSBool GlobalPauseGame(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
@@ -793,21 +774,16 @@ static JSValue GlobalPauseGame(OOJS_NATIVE_ARGS)
     OOJS_NATIVE_EXIT
 }
 
-#ifdef OO_DEBUG_MONITOR_ENABLED
 // quitGame() : Boolean
-static JSValue GlobalQuitGame(OOJS_NATIVE_ARGS)
+static JSBool GlobalQuitGame(JSContext* context, uintN argc, jsval* vp)
 {
     OOJS_NATIVE_ENTER(context)
 
     OOLog(@"script.debug.quit", @"%@", @"Quit requested via JavaScript global.quitGame()");
 
-    /*	Quit once the calling script has returned, so that the JavaScript
-            runtime can be shut down and leak-checked with no script on the stack.
-    */
-    [UNIVERSE performSelector:@selector(quitGame) withObject:nil afterDelay:0.0];
+    [UNIVERSE quitGame];
 
     OOJS_RETURN_BOOL(YES);
 
     OOJS_NATIVE_EXIT
 }
-#endif

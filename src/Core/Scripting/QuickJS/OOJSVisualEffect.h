@@ -1,6 +1,6 @@
 /*
 
-OOJSVisualEffect.h (QuickJS-ng)
+OOJSVisualEffect.h
 
 JavaScript proxy for OOVisualEffectEntities.
 
@@ -28,18 +28,15 @@ MA 02110-1301, USA.
 
 #import "OOVisualEffectEntity.h"
 #import <Foundation/Foundation.h>
-#include <quickjs.h>
+#include <jsapi.h>
 
 @class OOVisualEffectEntity;
 
-void InitOOJSVisualEffect(JSContext* context, JSValueConst global);
-
-JSClassID JSVisualEffectClassID(void);
+void InitOOJSVisualEffect(JSContext* context, JSObject* global);
 
 @interface OOVisualEffectEntity (OOJavaScriptExtensions)
 
-// Replaces SpiderMonkey's -getJSClass:andPrototype:.
-- (JSClassID)oo_jsClassID;
+- (void)getJSClass:(JSClass**)outClass andPrototype:(JSObject**)outPrototype;
 - (NSString*)oo_jsClassName;
 - (BOOL)isVisibleToScripts;
 - (NSArray*)subEntitiesForScript;
